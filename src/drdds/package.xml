@@ -3,7 +3,7 @@
   <name>drdds</name>
   <version>1.0.0</version>
   <description>DrDDS MSG type</description>
-  <maintainer email="fengzhichao@deeprobotics.cn">DeepRobotics</maintainer>
+  <maintainer email="fengzhichao@deeprobotics.cn">Zhichao (Chase) Feng</maintainer>
   <license>BSD 3-Clause</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
