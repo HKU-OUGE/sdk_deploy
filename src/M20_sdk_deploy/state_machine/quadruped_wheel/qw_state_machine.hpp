@@ -39,8 +39,6 @@ public:
     ~QwStateMachine(){}
 
     void Start(){
-        const std::string activation_key = "~/raisim/activation.raisim";
-        std::string urdf_path = "";
         if(remote_cmd_type_ == RemoteCommandType::kKeyBoard){
             uc_ptr_ = std::make_shared<KeyboardInterface>(robot_name_);
         }else{

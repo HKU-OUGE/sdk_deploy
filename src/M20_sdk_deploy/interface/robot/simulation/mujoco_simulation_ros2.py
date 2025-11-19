@@ -31,7 +31,7 @@ MODEL_NAME = "M20"
 CURRENT_DIR = Path(__file__).resolve().parent
 
 # Define the XML path relative to the Python file
-XML_PATH = CURRENT_DIR / ".." / ".." / ".." / "urdf_model" / "M20" / "mjcf" / "M20.xml"
+XML_PATH = CURRENT_DIR / ".." / ".." / ".." / "model" / "M20" / "mjcf" / "M20.xml"
 
 # Convert to absolute path as string
 XML_PATH = str(XML_PATH.resolve())
@@ -44,7 +44,7 @@ JOINT_DIR = np.array([1, 1, -1, 1, 1, -1, 1, -1, -1, 1, -1, 1, -1, -1, 1, -1], d
 POS_OFFSET_DEG = np.array([-25, 229, 160, 0, 25, -131, -200, 0, -25, -229, -160, 0, 25, 131, 200, 0], dtype=np.float32)
 POS_OFFSET_RAD = POS_OFFSET_DEG / 180.0 * np.pi
 
-URDF_INIT = {
+JOINT_INIT = {
     "M20": np.array([-0.438, -1.16, 2.76, 0,
                      0.438, -1.16, 2.76, 0,
                      -0.438, 1.16, -2.76, 0,
@@ -109,7 +109,7 @@ class MuJoCoSimulationNode(Node):
     def _set_initial_pose(self, key: str):
         """关节位置设置为与 PyBullet 脚本一致的初始角度"""
         qpos0 = self.data.qpos.copy()
-        qpos0[7:7 + self.dof_num] = URDF_INIT[key]  # ,3-6 basequat，0-2 basepos
+        qpos0[7:7 + self.dof_num] = JOINT_INIT[key]  # ,3-6 basequat，0-2 basepos
         qpos0[:3] = np.array([0, 0, 0.2])
         qpos0[3:7] = np.array([1, 0, 0, 0])
         self.data.qpos[:] = qpos0
