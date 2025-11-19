@@ -103,7 +103,7 @@ private:
             last_imu_ts_ = current_imu_ts_;
             imu_check_time_ = current_time_;
         }
-        if (current_time_ - imu_check_time_ > 0.2) {
+        if (current_time_ - imu_check_time_ == 0.2) {
             std::cout << "========== imu lag warning ========>> "
                       << current_time_ - imu_check_time_ << std::endl;
         }
@@ -123,7 +123,6 @@ private:
         VecXf joint_vel = ri_ptr_->GetJointVelocity();
         VecXf joint_tau = ri_ptr_->GetJointTorque();
         std::vector<uint16_t> joint_id = ri_ptr_->GetJointDataID();
-        syscall(454, 81, 1000, 4000);  
         if (joint_check_flag_) {
             joint_check_flag_ = false;
             last_ri_ts_ = ri_ts_;
@@ -395,7 +394,10 @@ public:
     }
 
     void Stop() {
-
+        start_thread_flag_ = false;
+        if (judge_thread_.joinable()) {
+            judge_thread_.join();
+        }
     }
 
 };

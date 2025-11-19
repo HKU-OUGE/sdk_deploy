@@ -107,6 +107,7 @@ public:
     }
 
     void Stop(){
+        sc_ptr_->Stop();
         uc_ptr_->Stop();
         ri_ptr_->Stop();
     }

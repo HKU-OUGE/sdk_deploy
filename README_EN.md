@@ -4,7 +4,7 @@
 ```mermaid
 graph LR
     A["/rl_deploy"] -->|/JOINTS_CMD| B["/mujoco_simulation"]
-    B -->|/IMU_DATA| A
+    A -->|/IMU_DATA| B
     B -->|/JOINTS_DATA| A
 ```
 ```bash
@@ -84,7 +84,6 @@ source install/setup.bash
 ros2 run rl_deploy rl_deploy
 
 # Terminal 2 
-source install/setup.bash
 python3 src/M20_sdk_deploy/interface/robot/simulation/mujoco_simulation_ros2.py
 ```
 
@@ -117,7 +116,7 @@ scp -r ~/M20_rl_deploy user@10.21.31.103:~/
 # ssh connect for remote development, 
 ssh user@10.21.31.103
 cd M20_rl_deploy
-colcon build --packages-up-to rl_deploy --cmake-args -DBUILD_PLATFORM=arm
+colcon build --packages-select rl_deploy --cmake-args -DBUILD_PLATFORM=arm
 
 
 sudo su # Root

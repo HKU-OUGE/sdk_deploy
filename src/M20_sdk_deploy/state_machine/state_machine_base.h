@@ -64,13 +64,13 @@ public:
     * @return 1:Enter interrupt 0:no
     */
     int time_interrupt() {
-        fds = epoll_wait(efd, evptr, 1, -1);    //阻塞监听，直到有事件发生
+        fds = epoll_wait(efd, evptr, 1, 10);
         if (evptr[0].events & EPOLLIN) {
             ret = read(evptr->data.fd, &value, sizeof(uint64_t));
             if (ret == -1) {
                 printf("read return 1 -1, errno :%d \r\n", errno);
-                return 1;
             }
+            return 1;
         }
         return 0;
     } /**< Acquire interrupt signal.*/
@@ -107,12 +107,14 @@ public:
     virtual void Start() = 0;
 
     virtual void Run() {
-        set_timer.time_init(floor(_dt * 1e3 + 1e-8));
+        set_timer.time_init(5);
         startTime = set_timer.get_start_time();
 
-        while (true) {
-            if (!set_timer.time_interrupt()) {
-                ri_ptr_->RefreshRobotData();
+        std::signal(SIGINT, &StateMachineBase::handler);
+
+        while (rclcpp::ok() && !shutdown_requested_) {
+            if (set_timer.time_interrupt()) {
+                                ri_ptr_->RefreshRobotData();
                 rclcpp::spin_some(ri_ptr_->get_node());
 
                 current_controller_->Run();
@@ -140,8 +142,12 @@ public:
     virtual void Stop() = 0;
 
     virtual std::shared_ptr<StateBase> GetStateControllerPtr(StateName state_name) = 0;
+    
+    static void handler(int signal) {
+        shutdown_requested_.store(true);
+    }
 
-
+    static std::atomic<bool> shutdown_requested_;
     const RobotType robot_type_;
 
     int run_cnt_ = 0;
@@ -157,3 +163,4 @@ public:
     StateName current_state_name_, next_state_name_;
 };
 
+std::atomic<bool> StateMachineBase::shutdown_requested_{false};

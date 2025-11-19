@@ -14,4 +14,4 @@ uint8 mos_state            # Mos状态
 uint8 battery_quantity     # 电池串数
 uint8 battery_ntc          # NTC个数
 float32[] battery_temperature  # 电池温度序列
-char[] battery_serialnum #电池序列号
+char[32] battery_serialnum #电池序列号

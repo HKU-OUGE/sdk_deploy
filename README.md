@@ -4,10 +4,62 @@
 
 本仓库使用ROS2来实现Sim-to-sim和Sim-to-real全流程，故需在电脑上先安装好ROS2，如在Ubuntu22.04上安装[ROS2 Humble](https://docs.ros.org/en/humble/index.html)
 ```mermaid
-graph LR
-    A["/rl_deploy"] -->|/JOINTS_CMD| B["/mujoco_simulation"]
-    B -->|/IMU_DATA| A
-    B -->|/JOINTS_DATA| A
+graph TD
+    A[Low-Level State]
+    B[Low-Level Node]
+    C[Low-Level Command]
+    
+    B -->|Publish| A
+    B -->|Subscribe| C
+
+    J["Deep Robotics RL Deploy"]
+    K["Cmd_vel"]
+
+    I["sdk_rl_deploy"]
+
+    D[Developer Node]
+    E[Perception Node]
+    F[Vision]
+    G[Lidar]
+    
+    E -->|Publish| F
+    E -->|Publish| G
+
+
+    %% Connections - Built-in RL (Orange)
+    J -->|Subscribe| A
+    J -->|Publish| C
+    J -->|Subscribe| K
+
+    %% Connections - sdk_rl_deploy (Green)
+    I -->|Subscribe| A
+    I -->|Publish| C
+    I -->|Subscribe| K
+
+    %% General Connections
+    D -->|Subscribe| F
+    D -->|Subscribe| G
+    D -->|Subscribe| A
+    D -->|Publish| K
+    D -->|Publish| C
+
+    %% Styling
+    classDef orange fill:#FFD580,stroke:#F4A261,stroke-width:2px,color:#000;
+    classDef green fill:#90EE90,stroke:#228B22,stroke-width:2px,color:#000;
+    classDef red fill:#FFB6C1,stroke:#DC143C,stroke-width:2px,color:#000;
+    classDef future fill:#DDA0DD,stroke:#9932CC,stroke-width:2px,color:#000;
+    classDef note fill:#FFFF99,stroke:#FFCC00,stroke-width:2px,color:#000;
+
+    class A,B,C,J,K orange
+    class I green
+    class D red
+    class E,F,G,H future
+    class SwitchNote note
+
+    %% Layout hint for mutual exclusion
+    J -.->|Switch Excludes| I
+    D -.->|Switch Excludes| I
+    D -.->|Switch Excludes| J
 ```
 ```bash
 # ros2 topic list
@@ -104,7 +156,7 @@ python3 src/M20_sdk_deploy/interface/robot/simulation/mujoco_simulation_ros2.py
 ## 仿真-实际
 此过程和仿真-仿真几乎一模一样，只需要添加连wifi传输数据步骤，然后修改编译指令即可。目前默认实机操控为keyboard键盘模式，后续我们将会添加手柄控制模式，敬请期待。
 
-请先下载 [drdds-ros2-msgs](https://drive.google.com/file/d/1Nvxot_LOKMvLAr608kFtZ28gfsgA_dsx/view?usp=sharing) 并安装
+请先下载 [drdds-ros2-msgs](https://drive.google.com/file/d/1NrMsYSY5AM0vYoYBc0Tc3BEbndN0ckos/view?usp=sharing) 并安装
 
 ```bash
 # 电脑和手柄均连接机器狗WiFi
@@ -117,12 +169,13 @@ scp -r ~/M20_rl_deploy user@10.21.31.103:~/
 # ssh连接机器狗运动主机以远程开发
 ssh user@10.21.31.103
 cd M20_rl_deploy
-colcon build --packages-up-to rl_deploy --cmake-args -DBUILD_PLATFORM=arm
+source /opt/ros/foxy/setup.bash
+colcon build --packages-select rl_deploy --cmake-args -DBUILD_PLATFORM=arm 
 
 
-sudo su # ROOT权限
-sudo dpkg -i drdds-ros2-msgs.v1.0.2+.arm64.2510291519.deb
-source /opt/ros/foxy/setup.bash #source ROS2 环境变量
+sudo su 
+sudo dpkg -i drdds-ros2-msgs.v1.0.4+96b382.arm64.2511141335.deb
+source /opt/ros/foxy/setup.bash 
 source /opt/robot/scripts/setup_ros2.sh
 ros2 service call /SDK_MODE drdds/srv/StdSrvInt32 command:\ 200 # /JOINTS_DATA话题发布频率，建议不超过500hz
 

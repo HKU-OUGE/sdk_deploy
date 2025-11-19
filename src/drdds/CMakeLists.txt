@@ -26,8 +26,12 @@ find_package(geometry_msgs REQUIRED)
 file(GLOB_RECURSE MSG_FILES RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}/msg" "msg/*.msg")
 list(TRANSFORM MSG_FILES PREPEND "msg/")
 
+file(GLOB_RECURSE SRV_FILES RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}/srv" "srv/*.srv")
+list(TRANSFORM SRV_FILES PREPEND "srv/")
+
 rosidl_generate_interfaces(${PROJECT_NAME}
   ${MSG_FILES}
+  ${SRV_FILES}
   DEPENDENCIES geometry_msgs
 )
 

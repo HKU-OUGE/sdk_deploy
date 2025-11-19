@@ -79,12 +79,11 @@ protected:
             for (int i = 0; i < dof_num_; ++i) {
                 if (!data_updated_[i] && current_joint_pos(i) != last_joint_pos(i)) {
                     data_updated_[i] = true;
-                    std::cout << "joint " << i << " data updated at " << cnt << " cnt!" << std::endl;
                 }
             }
             last_joint_pos = current_joint_pos;
             usleep(1000);
-            if (cnt > 10000) {
+            if (cnt == 10000) {
                 std::cout << data_updated_ << std::endl;
                 std::cout << "joint data update is not finished\n";
             }
@@ -251,7 +250,6 @@ public:
 
     virtual void Handler(const drdds::msg::JointsData::SharedPtr msg) {
         ++run_cnt_;
-        syscall(454, 80, 1000, 4000);  //
         for (int i = 0; i < dof_num_; ++i) {
             joint_pos_(i) = msg->data.joints_data[i].position * joint_dir_[i] + pos_offset_[i] / 180. * M_PI;
             joint_vel_(i) = msg->data.joints_data[i].velocity * joint_dir_[i];
