@@ -123,14 +123,7 @@ colcon build --packages-select rl_deploy --cmake-args -DBUILD_PLATFORM=arm
 
 sudo su 
 sudo dpkg -i drdds-ros2-msgs.v1.0.4+96b382.arm64.2511141335.deb
-source /opt/ros/foxy/setup.bash 
-source /opt/robot/scripts/setup_ros2.sh
-ros2 service call /SDK_MODE drdds/srv/StdSrvInt32 command:\ 200 # /JOINTS_DATA话题发布频率，建议不超过500hz
-
-# 运行
-source install/setup.bash
-ros2 run rl_deploy rl_deploy
-
+  
 # 退出sdk模式：
 ros2 service call /SDK_MODE drdds/srv/StdSrvInt32 command:\ 0
 

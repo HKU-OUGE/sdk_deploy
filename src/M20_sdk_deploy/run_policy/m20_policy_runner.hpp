@@ -101,7 +101,7 @@ public:
                                    0.0, -0.6,  1.0, 0.0,
                                    0.0,  0.6, -1.0, 0.0,
                                    0.0,  0.6, -1.0, 0.0;
-        SetDecimation(20);
+        SetDecimation(4);
         session_options_.SetIntraOpNumThreads(4);
         session_options_.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_EXTENDED);
         
@@ -112,8 +112,8 @@ public:
 
         // 加载模型
         session_ = Ort::Session(env_, policy_path_.c_str(), session_options_);
-        kp_ = Vec4f(60, 60, 60, 0.).replicate(4, 1);
-        kd_ = Vec4f(1.5, 1.5, 1.5, 1).replicate(4, 1);
+        kp_ = Vec4f(80, 80, 80, 0.).replicate(4, 1);
+        kd_ = Vec4f(2, 2, 2, 0.6).replicate(4, 1);
         
         robot2policy_idx = generate_permutation(robot_order, policy_order);
         policy2robot_idx = generate_permutation(policy_order, robot_order);
