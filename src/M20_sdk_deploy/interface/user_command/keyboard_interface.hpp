@@ -118,8 +118,6 @@ private:
                   << "  Rotation:  Q (CCW)  E (CW)\n"
                   << "  Mode:      R (damping)  Z (stand)  C (control)\n"
                   << "\n"
-                  << "  ★ HOLD MULTIPLE KEYS FOR COMBINED MOTION ★\n"
-                  << "    Examples: W+Q, W+E, A+Q, W+D+E, etc.\n\n";
 
         char ch;
 
