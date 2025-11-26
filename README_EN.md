@@ -6,7 +6,7 @@ This repository uses ROS2 to implement the entire Sim-to-sim and Sim-to-real wor
 ```mermaid
 graph LR
     A["/rl_deploy"] -->|/JOINTS_CMD| B["/mujoco_simulation"]
-    A -->|/IMU_DATA| B
+    B -->|/IMU_DATA| A
     B -->|/JOINTS_DATA| A
 ```
 ```bash
