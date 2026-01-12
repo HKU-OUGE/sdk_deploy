@@ -107,7 +107,7 @@ public:
     virtual void Start() = 0;
 
     virtual void Run() {
-        set_timer.time_init(1);
+        set_timer.time_init(5);
         startTime = set_timer.get_start_time();
 
         std::signal(SIGINT, &StateMachineBase::handler);

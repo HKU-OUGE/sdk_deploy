@@ -90,7 +90,7 @@ git clone https://github.com/DeepRoboticsLab/Lite3_sdk_deploy.git
 # Compile
 cd Lite3_sdk_deploy
 source /opt/ros/<ros-distro>/setup.bash
-colcon build --packages-up-to lite3_rl_deploy --cmake-args -DBUILD_PLATFORM=x86
+colcon build --packages-up-to lite3_sdk_deploy --cmake-args -DBUILD_PLATFORM=x86
 ```
 
 ```bash
@@ -98,7 +98,7 @@ colcon build --packages-up-to lite3_rl_deploy --cmake-args -DBUILD_PLATFORM=x86
 # Terminal 1 
 export ROS_DOMAIN_ID=1
 source install/setup.bash
-ros2 run lite3_rl_deploy rl_deploy
+ros2 run lite3_sdk_deploy rl_deploy
 
 # Terminal 2
 export ROS_DOMAIN_ID=1
@@ -143,7 +143,7 @@ scp -r ~/sdk_deploy/src/Lite3_sdk_deploy ysc@192.168.2.1:~/Lite3_sdk_deploy/src
 ssh ysc@192.168.2.1
 cd Lite3_sdk_deploy
 source /opt/ros/foxy/setup.bash
-colcon build --packages-up-to lite3_rl_deploy --cmake-args -DBUILD_PLATFORM=arm 
+colcon build --packages-up-to lite3_sdk_deploy --cmake-args -DBUILD_PLATFORM=arm 
 ```
 **Open a terminal**
 ```bash
@@ -151,7 +151,7 @@ colcon build --packages-up-to lite3_rl_deploy --cmake-args -DBUILD_PLATFORM=arm
 cd Lite3_sdk_deploy
 source install/setup.bash
 export ROS_DOMAIN_ID=1
-ros2 run lite3_rl_deploy rl_deploy
+ros2 run lite3_sdk_deploy rl_deploy
 
 # keyboard control
 - z： default position

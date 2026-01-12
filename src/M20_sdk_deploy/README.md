@@ -79,14 +79,14 @@ git clone https://github.com/DeepRoboticsLab/sdk_deploy.git
 # Compile
 cd sdk_deploy
 source /opt/ros/<ros-distro>/setup.bash
-colcon build --packages-up-to rl_deploy --cmake-args -DBUILD_PLATFORM=x86
+colcon build --packages-up-to m20_sdk_deploy --cmake-args -DBUILD_PLATFORM=x86
 ```
 
 ```bash
 # Run (Open 2 terminals)
 # Terminal 1
 source install/setup.bash
-ros2 run rl_deploy rl_deploy
+ros2 run m20_sdk_deploy rl_deploy
 
 # Terminal 2 
 python3 src/M20_sdk_deploy/interface/robot/simulation/mujoco_simulation_ros2.py
@@ -122,7 +122,7 @@ scp -r ~/sdk_deploy/src user@10.21.31.103:~/sdk_deploy
 ssh user@10.21.31.103
 cd sdk_deploy
 source /opt/ros/foxy/setup.bash #source ROS2 env
-colcon build --packages-select rl_deploy --cmake-args -DBUILD_PLATFORM=arm
+colcon build --packages-select m20_sdk_deploy --cmake-args -DBUILD_PLATFORM=arm
 
 
 sudo su # Root
@@ -132,7 +132,7 @@ ros2 service call /SDK_MODE drdds/srv/StdSrvInt32 command:\ 200 # /200 is /JOINT
 
 # Run
 source install/setup.bash
-ros2 run rl_deploy rl_deploy
+ros2 run m20_sdk_deploy rl_deploy
 
 # exit sdk mode：
 ros2 service call /SDK_MODE drdds/srv/StdSrvInt32 command:\ 0

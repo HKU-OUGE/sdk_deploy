@@ -247,8 +247,8 @@ class MuJoCoSimulationNode(Node):
         joints_msg.data.joints_data = [JointData() for _ in range(16)]
         for i in range(self.dof_num):
             joint = joints_msg.data.joints_data[i]
-            # joint.name = [32, 32, 32, 32]  # Dummy name (four spaces)
-            joint.name = "    "
+            joint.name = [32, 32, 32, 32]  # Dummy name (four spaces)
+            # joint.name = "    "
             joint.data_id = 0  # Dummy
             joint.status_word = 1  # Normal
             joint.position = float(pub_pos[i])

@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.10)
 
-project(lite3_rl_deploy)
+project(lite3_sdk_deploy)
 
 # 设置C++标准
 set(CMAKE_CXX_STANDARD 17)
