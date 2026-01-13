@@ -227,7 +227,7 @@ public:
         msg.header.stamp = this->now();
         // msg.header.frame_id = 0;
         for(int i=0;i<dof_num_;++i){
-            msg.data.joints_data[i].name = JOINT_NAMES[i];
+            // msg.data.joints_data[i].name = JOINT_NAMES[i];
             msg.data.joints_data[i].status_word = 1;
             msg.data.joints_data[i].position = pos(i);
             msg.data.joints_data[i].velocity = vel(i);
