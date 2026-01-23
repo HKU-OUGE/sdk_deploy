@@ -117,8 +117,12 @@ python3 src/Lite3_sdk_deploy/interface/robot/simulation/mujoco_simulation_ros2.p
 > - qe：clockwise/counter clockwise
 
 ## Sim-to-real  
-<span style="color: red;">**Before proceeding with this step, verify the version of your Lite3 system image. Ensure the image has ROS 2 and the transfer functionality package installed. If the image has not been upgraded, refer to the [README in lite3_transfer](../lite3_transfer/README.md) to install ROS 2 and the message transfer package.**</span>  
+<span style="color: red;">**Before proceeding with this step, verify the version of your Lite3 system image. Ensure the image has ROS 2 and the transfer functionality package installed. If the image has not been upgraded, refer to the [README in lite3_transfer](../lite3_transfer/README.md) and the [README in lite3_sdk_service](../lite3_sdk_service/README.md)**</span>  
 The default controller mode is currently set to keyboard mode. To switch to gamepad control, modify `RemoteCommandType::kKeyBoard` to `RemoteCommandType::kRetroidGamepad` in `main.cpp`.
+### SDK Mode Activation and Switching
+<span style="color: red;">**Note:ensure Lite3 switches modes while in a safe state such as idle; failure to do so may result in machine damage or personal injury.**</span>
+> - on： Tap “on” in the Retroid gamepad to enable SDK mode. Lite3 will automatically perform a zero-reset.
+> - off： Tap “off” in the Retroid gamepad to disable SDK mode. At this point, SDK_deploy will become inactive, and the system will switch to MPC mode.
 ### SSH connection
 ```bash
 # computer and gamepad should both connect to WiFi
@@ -133,7 +137,8 @@ The default controller mode is currently set to keyboard mode. To switch to game
 ssh ysc@192.168.2.1
 # enter your passward, the terminal will be active on the Lite3 computer
 ```
-### deploy test
+### SDK Deployment
+**Compile ROS2 package**
 ```bash
 # scp to transfer files to lite3 (open a terminal on your local computer) password is ' (a single quote)
 scp -r ~/sdk_deploy/src/drdds ysc@192.168.2.1:~/Lite3_sdk_deploy/src
@@ -145,38 +150,41 @@ cd Lite3_sdk_deploy
 source /opt/ros/foxy/setup.bash
 colcon build --packages-up-to lite3_sdk_deploy --cmake-args -DBUILD_PLATFORM=arm 
 ```
-**Open a terminal**
+**Run sdk deploy**
 ```bash
 # run rl_deploy control
 cd Lite3_sdk_deploy
 source install/setup.bash
 export ROS_DOMAIN_ID=1
 ros2 run lite3_sdk_deploy rl_deploy
-
-# keyboard control
-- z： default position
-- c： rl control default position
-- wasd：forward/leftward/backward/rightward
-- qe：clockwise/counter clockwise
-
-# gamepad control
-- Y： default position
-- A： rl control default position
-- Left joystick：forward/leftward/backward/rightward
-- Right joystick：clockwise/counter clockwise
 ```
-**(Optional) Change topic frequency**
+<span style="color: red;">**keyboard control:**</span>
+> - z： default position
+> - c： rl control default position
+> - wasd：forward/leftward/backward/rightward
+> - qe：clockwise/counter clockwise
+
+<span style="color: red;">**gamepad control:**</span>
+> - Y： default position
+> - A： rl control default position
+> - Left joystick：forward/leftward/backward/rightward
+> - Right joystick：clockwise/counter clockwise
+
+**(Optional) Change topic frequency**  
+You can use the App on the Retroid gamepad to adjust the publishing frequency of /JOINTS_DATA and /IMU_DATA.  
+Additionally, you can modify the /JOINTS_DATA and /IMU_DATA publish frequency using ROS2 commands.
 ```bash
-ros2 service call /SDK_MODE drdds/srv/StdSrvInt32 command:"{command: 1000}" 
-# The posting frequency for the /JOINTS_DATA and /IMU_DATA topic. The default value is 1000.
+ros2 service call /SDK_MODE drdds/srv/StdSrvInt32 command:"{command: 200}" 
+# The posting frequency for the /JOINTS_DATA and /IMU_DATA topic. The default value is 200.
 ```
 **(Optional) Cross-host communication**  
 The Lite3 computer has limited resources. To expand other functionalities, you may additionally configure a host computer (such as NVIDIA Jetson) for ROS2 communication.
-1. Connect the host computer to the Lite3 computer's WiFi network.
+1. Connect the host to Lite3 via a wired Ethernet cable.
 2. Following the steps above, run rl_deploy on the host computer.
 When compiling rl_deploy on the host computer, you may encounter the following error:
 ```bash
 /opt/rh/gcc-toolset-14/root/usr/include/c++/14/bits/stl_vector.h:1130: std::vector<_Tp, _Alloc>::reference std::vector<_Tp, _Alloc>::operator[](size_type) [with _Tp = unsigned int; _Alloc = std::allocator<unsigned int>; reference = unsigned int&; size_type = long unsigned int]: Assertion '__n < this->size()' failed.
 ```
 This is caused by an incompatible version of the ONNX Runtime library within the third_party directory of rl_deploy. Please select the appropriate ONNX Runtime library version based on your host architecture.  
-Cross-host cases have been successfully tested on NVIDIA Jetson AGX Orin with Jetpack version 6.1 and CUDA version 12.6. using the `onnxruntime-linux-aarch64-gpu-cuda12-1.18.1.tar.bz2` version from [csukuangfj/onnxruntime-libs](https://github.com/csukuangfj/onnxruntime-libs/releases?page=2).
+Verified cross-host cases:
+1.  NVIDIA Jetson AGX Orin with Jetpack version 6.1 and CUDA version 12.6. using the `onnxruntime-linux-aarch64-gpu-cuda12-1.18.1.tar.bz2` version from [csukuangfj/onnxruntime-libs](https://github.com/csukuangfj/onnxruntime-libs/releases?page=2).

@@ -14,10 +14,10 @@
 #include "service/lite3_sdk_service.hpp"
 
 int main(int argc, char** argv) {
-    // Set default ROS_DOMAIN_ID to 1 if not set
+    // Set default ROS_DOMAIN_ID to 0 if not set
     const char* domain_env = std::getenv("ROS_DOMAIN_ID");
     if (domain_env == nullptr) {
-        setenv("ROS_DOMAIN_ID", "1", 1);
+        setenv("ROS_DOMAIN_ID", "0", 1);
     }
 
     // Initialize ROS2

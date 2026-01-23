@@ -91,7 +91,7 @@ colcon build --packages-select lite3_sdk_service
 ```bash
 cd <workspace>
 source install/setup.bash
-export ROS_DOMAIN_ID=1  # Optional, defaults to 1 if not set
+export ROS_DOMAIN_ID=0  # Optional, defaults to 0 if not set
 ros2 run lite3_sdk_service sdk_service
 ```
 
@@ -139,7 +139,7 @@ After=network.target
 [Service]
 Type=simple
 User=ysc  # Replace with your username
-Environment=ROS_DOMAIN_ID=1
+Environment=ROS_DOMAIN_ID=0
 ExecStart=/bin/bash -lc 'source /opt/ros/foxy/setup.bash && \
                          source /home/ysc/transfer/install/setup.bash && \
                          exec /home/ysc/transfer/install/lite3_sdk_service/lib/lite3_sdk_service/sdk_service'
@@ -218,7 +218,7 @@ sudo kill <pid>
 
 1. Check if service is running: `sudo systemctl status lite3_sdk_service`
 2. Check logs: `sudo journalctl -u lite3_sdk_service -n 50`
-3. Verify ROS2 domain: Ensure `ROS_DOMAIN_ID=1` matches other nodes
+3. Verify ROS2 domain: Ensure `ROS_DOMAIN_ID=0` matches other nodes
 
 ### Node Won't Start
 
