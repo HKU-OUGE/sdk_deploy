@@ -207,6 +207,7 @@ public:
     virtual void SetJointCommand(Eigen::Matrix<float, Eigen::Dynamic, 5> input) {
         joint_cmd_ = input;
         auto msg = drdds::msg::JointsDataCmd();
+        msg.header.stamp = node_->now();  // 设置时间戳，避免延迟计算异常
 
         for (int i = 0; i < dof_num_; ++i) {
             msg.data.joints_data[i].position =

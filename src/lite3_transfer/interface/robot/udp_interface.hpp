@@ -74,7 +74,7 @@ private:
         }
         
         // 判断输入数值：必须小于等于200且为1000的因数
-        if (command <= 0 || command > 200 || 1000 % command != 0) {
+        if (command < 0 || command > 200 || 1000 % command != 0) {
             RCLCPP_WARN(get_logger(), 
                 "Invalid publish rate: %d Hz. The value must be less than or equal to 200 and a divisor of 1000. "
                 "Valid values: 1, 2, 4, 5, 8, 10, 20, 25, 40, 50, 100, 125, 200", 
