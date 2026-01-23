@@ -53,8 +53,10 @@ private:
     rclcpp::Publisher<drdds::msg::JointsData>::SharedPtr joint_data_pub_;
     rclcpp::Publisher<drdds::msg::ImuData>::SharedPtr imu_data_pub_;
     rclcpp::TimerBase::SharedPtr publish_timer_;
+    rclcpp::TimerBase::SharedPtr cmd_timer_;  // 1000Hz 定时器用于发送 UDP 命令
     rclcpp::Service<drdds::srv::StdSrvInt32>::SharedPtr set_rate_service_;
     std::mutex rate_mutex_;  // 保护 publish_rate_ 和 timer 的线程安全
+    std::mutex cmd_mutex_;   // 保护 robot_joint_cmd_ 的线程安全
 
     // Service callback 函数
     void SetPublishRateCallback(
@@ -66,16 +68,16 @@ private:
         // 如果输入频率为0，则调用Stop退出SDK模式切换至robot模式
         if (command == 0) {
             RCLCPP_INFO(get_logger(), "Command 0 received: Exiting SDK mode, switching to Robot mode");
-            // Stop();
+            Stop();
             response->result = 0;  // 成功
             return;
         }
         
-        // 判断输入数值是否为1000的因数
-        if (command <= 0 || 1000 % command != 0) {
+        // 判断输入数值：必须小于等于200且为1000的因数
+        if (command <= 0 || command > 200 || 1000 % command != 0) {
             RCLCPP_WARN(get_logger(), 
-                "Invalid publish rate: %d Hz. The value must be a divisor of 1000. "
-                "Valid values: 200, 250, 500, 1000", 
+                "Invalid publish rate: %d Hz. The value must be less than or equal to 200 and a divisor of 1000. "
+                "Valid values: 1, 2, 4, 5, 8, 10, 20, 25, 40, 50, 100, 125, 200", 
                 command);
             response->result = -1;  // 失败
             return;
@@ -108,7 +110,7 @@ private:
 
 public:
     // 将频率设置放到public中，可供外部查看频率
-    double publish_rate_ = 1000;
+    double publish_rate_ = 200;
     HardwareInterface(const std::string& robot_name, 
                         int local_port=43897, 
                         std::string robot_ip="192.168.2.1",
@@ -145,7 +147,19 @@ public:
                 this->PublishJointData();
                 this->PublishImuData();
             }
-        );  
+        );
+        
+        // 创建 1000Hz 定时器用于发送 UDP 命令
+        // 每次收到 ROS 消息（200Hz）时，会通过这个定时器发送 5 次 UDP 消息（1000Hz）
+        constexpr double cmd_send_rate = 1000.0;  // 1000 Hz
+        auto cmd_period = std::chrono::duration<double>(1.0 / cmd_send_rate);  // 1ms
+        cmd_timer_ = this->create_wall_timer(
+            std::chrono::duration_cast<std::chrono::microseconds>(cmd_period),
+            [this]() {
+                this->SendCommandTimerCallback();
+            }
+        );
+        RCLCPP_INFO(get_logger(), "UDP command send timer initialized at %.0f Hz", cmd_send_rate);
 
     }   
     ~HardwareInterface(){
@@ -208,7 +222,18 @@ public:
     virtual VecXf GetContactForce() {
         return VecXf::Zero(4);
     }
+    
+    // 定时器回调函数：以 1000Hz 频率发送 UDP 命令
+    void SendCommandTimerCallback() {
+        std::lock_guard<std::mutex> lock(cmd_mutex_);
+        if (sender_ != nullptr) {
+            sender_->SendCmd(robot_joint_cmd_);
+        }
+    }
+
     virtual void SetJointCommand(const drdds::msg::JointsDataCmd::SharedPtr msg){
+        // 更新命令数据（加锁保护，避免与定时器回调冲突）
+        std::lock_guard<std::mutex> lock(cmd_mutex_);
         for(int i=0;i<dof_num_;++i){
             robot_joint_cmd_.joint_cmd[i].kp       = msg->data.joints_data[i].kp;
             robot_joint_cmd_.joint_cmd[i].position = msg->data.joints_data[i].position;
@@ -216,7 +241,8 @@ public:
             robot_joint_cmd_.joint_cmd[i].velocity = msg->data.joints_data[i].velocity;
             robot_joint_cmd_.joint_cmd[i].torque   = msg->data.joints_data[i].torque;
         }
-        sender_->SendCmd(robot_joint_cmd_);
+        // 不再直接发送，由定时器以 1000Hz 频率发送
+        // 这样每次收到 ROS 消息（200Hz）时，定时器会在 5ms 内发送 5 次 UDP 消息
     }
     virtual void PublishJointData(){
         auto pos = GetJointPosition();

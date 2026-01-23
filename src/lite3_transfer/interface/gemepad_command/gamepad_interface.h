@@ -75,7 +75,7 @@ public:
             msg.header.stamp = this->now();            
             gamepad_pub_->publish(msg);
             
-            std::this_thread::sleep_for(std::chrono::milliseconds(10)); // 100Hz 发布频率
+            std::this_thread::sleep_for(std::chrono::milliseconds(5)); // 200Hz 发布频率
         }
     }
 };
