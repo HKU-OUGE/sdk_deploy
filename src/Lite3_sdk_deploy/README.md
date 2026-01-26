@@ -122,6 +122,7 @@ The default controller mode is currently set to keyboard mode. To switch to game
 <span style="color: red;">**Warning: Switching states requires processing time. After pressing the slider, please wait for approximately 10 seconds. Then manually rotate the joint to ensure it moves freely without resistance and is not in damping mode. Only then proceed with standing up or walking. Failure to do so may cause dangerous situations such as the Lite3 suddenly jumping up or dashing forward.**</span>
 > - Click the slider to the right of SDK Mode. When the slider turns blue, it indicates that SDK Mode is enabled. Lite3 will automatically perform a zero-reset. On the contrary，SDK mode will become inactive, and the system will switch to MPC mode.  
 <img src="../../img/Lite3_switch_mode.png" alt="Click slider to switch mode in Retroid gamepad" width="500">
+
 ### SSH connection
 ```bash
 # computer and gamepad should both connect to WiFi
