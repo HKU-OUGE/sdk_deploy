@@ -96,12 +96,10 @@ colcon build --packages-up-to lite3_sdk_deploy --cmake-args -DBUILD_PLATFORM=x86
 ```bash
 # Run (Open 2 terminals)
 # Terminal 1 
-export ROS_DOMAIN_ID=1
 source install/setup.bash
 ros2 run lite3_sdk_deploy rl_deploy
 
 # Terminal 2
-export ROS_DOMAIN_ID=1
 source install/setup.bash
 python3 src/Lite3_sdk_deploy/interface/robot/simulation/mujoco_simulation_ros2.py
 ```
@@ -117,12 +115,12 @@ python3 src/Lite3_sdk_deploy/interface/robot/simulation/mujoco_simulation_ros2.p
 > - qe：clockwise/counter clockwise
 
 ## Sim-to-real  
-<span style="color: red;">**Before proceeding with this step, verify the version of your Lite3 system image. Ensure the image has ROS 2 and the transfer functionality package installed. If the image has not been upgraded, refer to the [README in lite3_transfer](../lite3_transfer/README.md) and the [README in lite3_sdk_service](../lite3_sdk_service/README.md)**</span>  
+<span style="color: red;">**Before proceeding with this step, verify the version of your Lite3 system image. Ensure the image has ROS 2 and the transfer functionality package installed. If the image has not been upgraded, please contact your technical support.**</span>  
 The default controller mode is currently set to keyboard mode. To switch to gamepad control, modify `RemoteCommandType::kKeyBoard` to `RemoteCommandType::kRetroidGamepad` in `main.cpp`.
 ### SDK Mode Activation and Switching
 <span style="color: red;">**Note:ensure Lite3 switches modes while in a safe state such as idle; failure to do so may result in machine damage or personal injury.**</span>
-> - on： Tap “on” in the Retroid gamepad to enable SDK mode. Lite3 will automatically perform a zero-reset.
-> - off： Tap “off” in the Retroid gamepad to disable SDK mode. At this point, SDK_deploy will become inactive, and the system will switch to MPC mode.
+> - Click the slider to the right of SDK Mode. When the slider turns blue, it indicates that SDK Mode is enabled. Lite3 will automatically perform a zero-reset. On the contrary，SDK mode will become inactive, and the system will switch to MPC mode.  
+<img src="../../img/Lite3_switch_mode.png" alt="Click slider to switch mode in Retroid gamepad" width="500">
 ### SSH connection
 ```bash
 # computer and gamepad should both connect to WiFi
@@ -155,7 +153,6 @@ colcon build --packages-up-to lite3_sdk_deploy --cmake-args -DBUILD_PLATFORM=arm
 # run rl_deploy control
 cd Lite3_sdk_deploy
 source install/setup.bash
-export ROS_DOMAIN_ID=1
 ros2 run lite3_sdk_deploy rl_deploy
 ```
 <span style="color: red;">**keyboard control:**</span>
@@ -171,8 +168,10 @@ ros2 run lite3_sdk_deploy rl_deploy
 > - Right joystick：clockwise/counter clockwise
 
 **(Optional) Change topic frequency**  
-You can use the App on the Retroid gamepad to adjust the publishing frequency of /JOINTS_DATA and /IMU_DATA.  
-Additionally, you can modify the /JOINTS_DATA and /IMU_DATA publish frequency using ROS2 commands.
+> - You can use the App on the Retroid gamepad to adjust the publishing frequency of /JOINTS_DATA and /IMU_DATA.  
+<img src="../../img/Lite3_change_fre.png" alt="Slide to select the appropriate number to modify the frequency in Retroid gamepad" width="500"> 
+
+> - Additionally, you can modify the /JOINTS_DATA and /IMU_DATA publish frequency using ROS2 commands.
 ```bash
 ros2 service call /SDK_MODE drdds/srv/StdSrvInt32 command:"{command: 200}" 
 # The posting frequency for the /JOINTS_DATA and /IMU_DATA topic. The default value is 200.
