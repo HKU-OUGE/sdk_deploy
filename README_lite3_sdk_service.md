@@ -115,7 +115,9 @@ Before SCP transfer, you can first remove the SDK deploy folder to reduce transf
 ### Compile packages
 ```bash
 # scp to transfer files to lite3 (open a terminal on your local computer) password is ' (a single quote)
-scp -r ~/sdk_deploy/src ysc@192.168.2.1:~/lite3_sdk_service/src
+ssh ysc@192.168.2.1 'mkdir -p ~/lite3_sdk_service/src' && \
+scp -r ~/sdk_deploy/src/drdds ~/sdk_deploy/src/lite3_sdk_service ~/sdk_deploy/src/lite3_transfer ysc@192.168.2.1:~/lite3_sdk_service/src
+
 
 # ssh connect for remote development
 ssh ysc@192.168.2.1
