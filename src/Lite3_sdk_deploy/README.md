@@ -88,7 +88,7 @@ pip install "numpy < 2.0" mujoco
 git clone https://github.com/DeepRoboticsLab/Lite3_sdk_deploy.git
 
 # Compile
-cd Lite3_sdk_deploy
+cd sdk_deploy
 source /opt/ros/<ros-distro>/setup.bash
 colcon build --packages-up-to lite3_sdk_deploy --cmake-args -DBUILD_PLATFORM=x86
 ```
