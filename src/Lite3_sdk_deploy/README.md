@@ -85,7 +85,7 @@ Everyone is welcome to contribute to this repo. If you discover a bug or optimiz
 ## Sim-to-sim
 ```bash
 pip install "numpy < 2.0" mujoco
-git clone https://github.com/DeepRoboticsLab/Lite3_sdk_deploy.git
+git clone https://github.com/DeepRoboticsLab/sdk_deploy.git
 
 # Compile
 cd sdk_deploy
@@ -126,14 +126,12 @@ The default controller mode is currently set to keyboard mode. To switch to game
 ### SSH connection
 ```bash
 # computer and gamepad should both connect to WiFi
-# WiFi: Lite3********
+# WiFi: lite3********
 # Passward: 12345678 (If wrong, contact technical support)
 
-# ssh connect for remote development, the passward has the following 3 combinations
+# ssh connect for remote development
 #Username	Password
 #ysc		' (a single quote)
-#user		123456
-#firefly	firefly
 ssh ysc@192.168.2.1
 # enter your passward, the terminal will be active on the Lite3 computer
 ```
@@ -141,8 +139,8 @@ ssh ysc@192.168.2.1
 **Compile ROS2 package**
 ```bash
 # scp to transfer files to lite3 (open a terminal on your local computer) password is ' (a single quote)
-scp -r ~/sdk_deploy/src/drdds ysc@192.168.2.1:~/Lite3_sdk_deploy/src
-scp -r ~/sdk_deploy/src/Lite3_sdk_deploy ysc@192.168.2.1:~/Lite3_sdk_deploy/src
+ssh ysc@192.168.2.1 'mkdir -p ~/Lite3_sdk_deploy/src' && \
+scp -r ~/sdk_deploy/src/drdds ~/sdk_deploy/src/Lite3_sdk_deploy ysc@192.168.2.1:~/Lite3_sdk_deploy/src
 
 # ssh connect for remote development
 ssh ysc@192.168.2.1
