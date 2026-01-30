@@ -18,7 +18,7 @@ graph LR
     A["/rl_deploy"] -->|/JOINTS_CMD| B["/lite3"]
     B -->|/IMU_DATA| A
     B -->|/JOINTS_DATA| A
-    C["retroid_gamepad"] -->|/GAMEPAD_DATA| A
+    C["/retroid_gamepad"] -->|/GAMEPAD_DATA| A
 ```
 ```bash
 # ros2 topic list
