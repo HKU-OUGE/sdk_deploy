@@ -85,10 +85,13 @@ colcon build --packages-up-to m20_sdk_deploy --cmake-args -DBUILD_PLATFORM=x86
 ```bash
 # Run (Open 2 terminals)
 # Terminal 1
+export ROS_DOMAIN_ID=1
 source install/setup.bash
 ros2 run m20_sdk_deploy rl_deploy
 
 # Terminal 2 
+export ROS_DOMAIN_ID=1
+source install/setup.bash
 python3 src/M20_sdk_deploy/interface/robot/simulation/mujoco_simulation_ros2.py
 ```
 
