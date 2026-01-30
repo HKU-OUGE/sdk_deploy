@@ -116,9 +116,10 @@ python3 src/Lite3_sdk_deploy/interface/robot/simulation/mujoco_simulation_ros2.p
 
 ## Sim-to-real  
 **Before proceeding with this step, verify the version of your Lite3 system image. Ensure the image has ROS 2 and the transfer functionality package installed. If the image has not been upgraded, please contact your technical support.**
-The default controller mode is currently set to keyboard mode. To switch to gamepad control, modify `RemoteCommandType::kKeyBoard` to `RemoteCommandType::kRetroidGamepad` in `main.cpp`. Please use this app for the following process!
+The default controller mode is currently set to keyboard mode. To switch to gamepad control, modify `RemoteCommandType::kKeyBoard` to `RemoteCommandType::kRetroidGamepad` in `main.cpp`. Please use this app for the following process! 
 
-![alt text](image.png)
+You can download the structure parts mentioned in the video which is used to mount the AGX Jetson Orin on the robot with this [link](https://drive.google.com/file/d/1ksdvI1zkGVMrUQH-tLnD6jNTp4dic-UI/view?usp=drive_link).
+
 ### SDK Mode Activation and Switching
 <span style="color: red;">**Warning: Ensure Lite3 switches modes while in a safe state such as idle; failure to do so may result in machine damage or personal injury.**</span>  
 <span style="color: red;">**Warning: Switching states requires processing time. After pressing the slider, please wait for approximately 10 seconds. Then manually rotate the joint to ensure it moves freely without resistance and is not in damping mode. Only then proceed with standing up or walking. Failure to do so may cause dangerous situations such as the Lite3 suddenly jumping up or dashing forward.**</span>
