@@ -1,0 +1,336 @@
+<mujoco model="M20">
+
+    <default>
+        <default class="robot">
+            <default class="motor">
+                <joint />
+                <motor />
+            </default>
+            <default class="visual">
+                <geom material="default_material" contype="0" conaffinity="0" group="2" />
+            </default>
+            <default class="collision">
+                <geom material="collision_material" condim="3" contype="1" conaffinity="1" solref="0.005 1" friction="1 0.01 0.001" density="0" group="1" />
+                
+            </default>
+        </default>
+    </default>
+
+    <compiler angle="radian" meshdir="../meshes/" />
+    <compiler autolimits="true" />
+
+    <asset>
+        <material name="default_material" rgba="0.7 0.7 0.7 1" />
+        <material name="collision_material" rgba="0.0 0.4 0.8 0.2" />
+        <mesh name="base_link" file="base_link.STL" />
+        <mesh name="fl_hipx" file="fl_hipx.STL" />
+        <mesh name="fl_hipy" file="fl_hipy.STL" />
+        <mesh name="fl_knee" file="fl_knee.STL" />
+        <mesh name="fl_wheel" file="fl_wheel.STL" />
+        <mesh name="fr_hipx" file="fr_hipx.STL" />
+        <mesh name="fr_hipy" file="fr_hipy.STL" />
+        <mesh name="fr_knee" file="fr_knee.STL" />
+        <mesh name="fr_wheel" file="fr_wheel.STL" />
+        <mesh name="hl_hipx" file="hl_hipx.STL" />
+        <mesh name="hl_hipy" file="hl_hipy.STL" />
+        <mesh name="hl_knee" file="hl_knee.STL" />
+        <mesh name="hl_wheel" file="hl_wheel.STL" />
+        <mesh name="hr_hipx" file="hr_hipx.STL" />
+        <mesh name="hr_hipy" file="hr_hipy.STL" />
+        <mesh name="hr_knee" file="hr_knee.STL" />
+        <mesh name="hr_wheel" file="hr_wheel.STL" />
+        <texture name="texplane" type="2d" builtin="checker" rgb1=".2 .3 .4" rgb2=".1 0.15 0.2" width="512" height="512" />
+        
+        <material name="MatPlane" reflectance="0.3" texture="texplane" texrepeat="1 1" texuniform="true" />
+    <texture type="skybox" builtin="gradient" rgb1="0.3 0.5 0.7" rgb2="0 0 0" width="512" height="307" />
+    <texture name="grid" type="2d" builtin="checker" width="512" height="512" rgb1=".1 .2 .3" rgb2=".2 .3 .4" />
+    <material name="grid_mat" texture="grid" texrepeat="1 1" texuniform="true" reflectance=".2" />
+    <material name="stone_mat" rgba="0.7 0.7 0.7 1" />
+    <material name="rail_mat" rgba="0.8 0.2 0.2 1" />
+    <material name="box_mat" rgba="0.3 0.8 0.3 1" />
+  </asset>
+
+    <worldbody>
+        
+        <light directional="true" pos="-0.5 0.5 3" dir="0 0 -1" />
+        
+        <geom name="floor" pos="0 0 0" size="100 100 .125" type="plane" material="MatPlane" condim="3" friction="1 0.01 0.01" group="0" />
+
+        <body name="base_link" pos="0 0. 1." quat="1 0 0 0" childclass="robot">
+            <freejoint name="floating_base" />
+            <inertial pos="0.00355105878308153 0.0016507579200937 -0.00346462146571654" quat="1 0 0 0" mass="15.882" diaginertia="0.087919 0.533522 0.563492" />
+
+            <site name="imu_site" pos="0.0632 -0.0268 0.0435" size="0.005" rgba="1 0 0 1" />
+            <site name="base_site" pos="0 0 0" quat="1 0 0 0" />
+
+            <geom type="mesh" mesh="base_link" class="visual" />
+            <geom size="0.375 0.045 0.07" type="box" class="collision" />
+            <geom size="0.07 0.375" pos="0 0.045 0" quat="0.707107 0 0.707107 0" type="cylinder" class="collision" />
+            <geom size="0.07 0.375" pos="0 -0.045 0" quat="0.707107 0 0.707107 0" type="cylinder" class="collision" />
+
+            <body name="fl_hipx" pos="0.3141 0.0685 0">
+                <inertial pos="-0.0111893 0.00891693 0.000405666" quat="0.581628 0.481707 0.465607 0.461387" mass="0.259964" diaginertia="0.000374402 0.000286289 0.000179309" />
+                <joint name="fl_hipx_joint" pos="0 0 0" axis="-1 0 0" range="-0.436 0.611" actuatorfrcrange="-76.4 76.4" />
+                <geom type="mesh" mesh="fl_hipx" class="visual" />
+                <geom size="0.048 0.07" pos="0 0.055 0" quat="0.707107 0.707107 0 0" type="cylinder" class="collision" />
+                <body name="fl_hipy">
+                    <inertial pos="-0.00199375 0.098439 -0.130664" quat="0.6754 -0.0565887 0.0622156 0.73264" mass="2.618" diaginertia="0.0410181 0.0408067 0.00297328" />
+                    <joint name="fl_hipy_joint" pos="0 0 0" axis="0 -1 0" range="-2.286 2.583" actuatorfrcrange="-76.4 76.4" />
+                    <geom type="mesh" mesh="fl_hipy" class="visual" />
+                    <geom size="0.035 0.01 0.125" pos="-0.01 0.11 -0.125" type="box" class="collision" />
+                    <geom size="0.05 0.045" pos="0 0.11 -0.25" quat="0.707107 0.707107 0 0" type="cylinder" class="collision" />
+                    <body name="fl_knee" pos="0 0.0984 -0.25">
+                        <inertial pos="0.00341917 0.00269124 -0.181265" quat="0.633405 -0.0508555 0.0475887 0.77068" mass="1.145" diaginertia="0.0121304 0.0117245 0.000948105" />
+                        <joint name="fl_knee_joint" pos="0 0 0" axis="0 -1 0" range="-2.809 2.792" actuatorfrcrange="-76.4 76.4" />
+                        <geom type="mesh" mesh="fl_knee" class="visual" />
+                        <geom size="0.03 0.0125 0.125" pos="0.015 -0.015 -0.125" type="box" class="collision" />
+                        <geom size="0.04 0.05" pos="0 0.02 -0.25" quat="0.707107 0.707107 0 0" type="cylinder" class="collision" />
+                        <body name="fl_wheel" pos="0 0.059676 -0.25">
+                            <inertial pos="-3.11398e-07 0.000279002 5.70329e-07" quat="0.707107 0 0 0.707107" mass="0.638" diaginertia="0.002853 0.001535 0.001535" />
+                            <joint name="fl_wheel_joint" pos="0 0 0" axis="0 -1 0" actuatorfrcrange="-21.6 21.6" />
+                            <geom type="mesh" mesh="fl_wheel" class="visual" />
+                            <geom size="0.09 0.027" quat="0.707107 0.707107 0 0" type="cylinder" class="collision" />
+                        </body>
+                    </body>
+                </body>
+            </body>
+            <body name="fr_hipx" pos="0.3141 -0.0685 0">
+                <inertial pos="-0.0110901 -0.00875035 0.000521421" quat="0.461387 0.465607 0.481707 0.581628" mass="0.259964" diaginertia="0.000374402 0.000286289 0.000179309" />
+                <joint name="fr_hipx_joint" pos="0 0 0" axis="-1 0 0" range="-0.611 0.436" actuatorfrcrange="-76.4 76.4" />
+                <geom type="mesh" mesh="fr_hipx" class="visual" />
+                <geom size="0.048 0.07" pos="0 -0.055 0" quat="0.707107 0.707107 0 0" type="cylinder" class="collision" />
+                <body name="fr_hipy">
+                    <inertial pos="-0.00229992 -0.0989709 -0.130925" quat="0.6964 0.0586688 -0.0587886 0.712831" mass="2.618" diaginertia="0.0407542 0.040538 0.00301281" />
+                    <joint name="fr_hipy_joint" pos="0 0 0" axis="0 -1 0" range="-2.286 2.583" actuatorfrcrange="-76.4 76.4" />
+                    <geom type="mesh" mesh="fr_hipy" class="visual" />
+                    <geom size="0.035 0.01 0.125" pos="-0.01 -0.11 -0.125" type="box" class="collision" />
+                    <geom size="0.05 0.045" pos="0 -0.11 -0.25" quat="0.707107 0.707107 0 0" type="cylinder" class="collision" />
+                    <body name="fr_knee" pos="0 -0.0984 -0.25">
+                        <inertial pos="0.00354945 -0.00247884 -0.180089" quat="0.769194 0.0472982 -0.0504711 0.635261" mass="1.145" diaginertia="0.0122564 0.0118448 0.000951718" />
+                        <joint name="fr_knee_joint" pos="0 0 0" axis="0 -1 0" range="-2.809 2.792" actuatorfrcrange="-76.4 76.4" />
+                        <geom type="mesh" mesh="fr_knee" class="visual" />
+                        <geom size="0.03 0.0125 0.125" pos="0.015 0.015 -0.125" type="box" class="collision" />
+                        <geom size="0.04 0.05" pos="0 -0.02 -0.25" quat="0.707107 0.707107 0 0" type="cylinder" class="collision" />
+                        <body name="fr_wheel" pos="0 -0.059676 -0.25">
+                            <inertial pos="-6.47327e-07 -0.000279012 -4.6242e-08" quat="0.707107 0 0 0.707107" mass="0.638" diaginertia="0.002853 0.001535 0.001535" />
+                            <joint name="fr_wheel_joint" pos="0 0 0" axis="0 -1 0" actuatorfrcrange="-21.6 21.6" />
+                            <geom type="mesh" mesh="fr_wheel" class="visual" />
+                            <geom size="0.09 0.027" quat="0.707107 0.707107 0 0" type="cylinder" class="collision" />
+                        </body>
+                    </body>
+                </body>
+            </body>
+            <body name="hl_hipx" pos="-0.3141 0.0685 0">
+                <inertial pos="0.0110901 0.00875014 0.000524884" quat="0.465607 0.461387 0.581628 0.481707" mass="0.259964" diaginertia="0.000374402 0.000286289 0.000179309" />
+                <joint name="hl_hipx_joint" pos="0 0 0" axis="-1 0 0" range="-0.436 0.611" actuatorfrcrange="-76.4 76.4" />
+                <geom type="mesh" mesh="hl_hipx" class="visual" />
+                <geom size="0.048 0.07" pos="0 0.055 0" quat="0.707107 0.707107 0 0" type="cylinder" class="collision" />
+                <body name="hl_hipy">
+                    <inertial pos="0.00204343 0.0990227 -0.130697" quat="0.750359 -0.0628584 0.0546506 0.655761" mass="2.618" diaginertia="0.0408376 0.0406211 0.00299727" />
+                    <joint name="hl_hipy_joint" pos="0 0 0" axis="0 -1 0" range="-2.583 2.286" actuatorfrcrange="-76.4 76.4" />
+                    <geom type="mesh" mesh="hl_hipy" class="visual" />
+                    <geom size="0.035 0.01 0.125" pos="0.01 0.11 -0.125" type="box" class="collision" />
+                    <geom size="0.05 0.045" pos="0 0.11 -0.25" quat="0.707107 0.707107 0 0" type="cylinder" class="collision" />
+                    <body name="hl_knee" pos="0 0.0984 -0.25">
+                        <inertial pos="-0.00354945 0.00247885 -0.180089" quat="0.769194 -0.0472982 0.0504711 0.635261" mass="1.145" diaginertia="0.0122564 0.0118448 0.000951718" />
+                        <joint name="hl_knee_joint" pos="0 0 0" axis="0 -1 0" range="-2.792 2.809" actuatorfrcrange="-76.4 76.4" />
+                        <geom type="mesh" mesh="hl_knee" class="visual" />
+                        <geom size="0.03 0.0125 0.125" pos="-0.015 0.015 -0.125" type="box" class="collision" />
+                        <geom size="0.04 0.05" pos="0 0.02 -0.25" quat="0.707107 0.707107 0 0" type="cylinder" class="collision" />
+                        <body name="hl_wheel" pos="0 0.059676 -0.25">
+                            <inertial pos="-6.07889e-07 0.000279009 2.1049e-07" quat="0.707107 0 0 0.707107" mass="0.638" diaginertia="0.002853 0.001535 0.001535" />
+                            <joint name="hl_wheel_joint" pos="0 0 0" axis="0 -1 0" actuatorfrcrange="-21.6 21.6" />
+                            <geom type="mesh" mesh="hl_wheel" class="visual" />
+                            <geom size="0.09 0.027" quat="0.707107 0.707107 0 0" type="cylinder" class="collision" />
+                        </body>
+                    </body>
+                </body>
+            </body>
+            <body name="hr_hipx" pos="-0.3141 -0.0685 0">
+                <inertial pos="0.0110902 -0.00875012 0.000524937" quat="0.481707 0.581628 0.461387 0.465607" mass="0.259964" diaginertia="0.000374402 0.000286289 0.000179309" />
+                <joint name="hr_hipx_joint" pos="0 0 0" axis="-1 0 0" range="-0.611 0.436" actuatorfrcrange="-76.4 76.4" />
+                <geom type="mesh" mesh="hr_hipx" class="visual" />
+                <geom size="0.048 0.07" pos="0 -0.055 0" quat="0.707107 0.707107 0 0" type="cylinder" class="collision" />
+                <body name="hr_hipy">
+                    <inertial pos="0.001992 -0.0983704 -0.130561" quat="0.676694 0.0567616 -0.0621797 0.731435" mass="2.618" diaginertia="0.0410109 0.0408028 0.00297526" />
+                    <joint name="hr_hipy_joint" pos="0 0 0" axis="0 -1 0" range="-2.583 2.286" actuatorfrcrange="-76.4 76.4" />
+                    <geom type="mesh" mesh="hr_hipy" class="visual" />
+                    <geom size="0.035 0.01 0.125" pos="0.01 -0.11 -0.125" type="box" class="collision" />
+                    <geom size="0.05 0.045" pos="0 -0.11 -0.25" quat="0.707107 0.707107 0 0" type="cylinder" class="collision" />
+                    <body name="hr_knee" pos="0 -0.0984 -0.25">
+                        <inertial pos="-0.00341053 -0.00270202 -0.181287" quat="0.63448 0.050937 -0.0475303 0.769793" mass="1.145" diaginertia="0.0121352 0.0117289 0.000948904" />
+                        <joint name="hr_knee_joint" pos="0 0 0" axis="0 -1 0" range="-2.792 2.809" actuatorfrcrange="-76.4 76.4" />
+                        <geom type="mesh" mesh="hr_knee" class="visual" />
+                        <geom size="0.03 0.0125 0.125" pos="-0.015 0.015 -0.125" type="box" class="collision" />
+                        <geom size="0.04 0.05" pos="0 -0.02 -0.25" quat="0.707107 0.707107 0 0" type="cylinder" class="collision" />
+                        <body name="hr_wheel" pos="0 -0.059676 -0.25">
+                            <inertial pos="6.09746e-07 -0.000279009 2.01314e-07" quat="0.707107 0 0 0.707107" mass="0.638" diaginertia="0.002853 0.001535 0.001535" />
+                            <joint name="hr_wheel_joint" pos="0 0 0" axis="0 -1 0" actuatorfrcrange="-21.6 21.6" />
+                            <geom type="mesh" mesh="hr_wheel" class="visual" />
+                            <geom size="0.09 0.027" quat="0.707107 0.707107 0 0" type="cylinder" class="collision" />
+                        </body>
+                    </body>
+                </body>
+            </body>
+        </body>
+    <geom type="box" pos="5.000 0.0 0.050" size="3.000 0.100 0.050" material="rail_mat" name="rail_1" />
+    <geom type="box" pos="5.000 1.0 0.050" size="3.000 0.100 0.050" material="rail_mat" name="rail_2" />
+    <geom type="box" pos="10.217 -0.590 0.070" size="0.200 0.200 0.05" material="stone_mat" name="stone_0_0" />
+    <geom type="box" pos="10.195 -0.018 0.054" size="0.200 0.200 0.05" material="stone_mat" name="stone_0_1" />
+    <geom type="box" pos="10.213 0.594 0.069" size="0.200 0.200 0.05" material="stone_mat" name="stone_0_2" />
+    <geom type="box" pos="10.813 -0.587 0.062" size="0.200 0.200 0.05" material="stone_mat" name="stone_1_0" />
+    <geom type="box" pos="10.813 -0.001 0.065" size="0.200 0.200 0.05" material="stone_mat" name="stone_1_1" />
+    <geom type="box" pos="10.787 0.582 0.062" size="0.200 0.200 0.05" material="stone_mat" name="stone_1_2" />
+    <geom type="box" pos="11.398 -0.581 0.053" size="0.200 0.200 0.05" material="stone_mat" name="stone_2_0" />
+    <geom type="box" pos="11.401 0.020 0.052" size="0.200 0.200 0.05" material="stone_mat" name="stone_2_1" />
+    <geom type="box" pos="11.402 0.584 0.050" size="0.200 0.200 0.05" material="stone_mat" name="stone_2_2" />
+    <geom type="box" pos="12.020 -0.599 0.062" size="0.200 0.200 0.05" material="stone_mat" name="stone_3_0" />
+    <geom type="box" pos="12.013 -0.009 0.051" size="0.200 0.200 0.05" material="stone_mat" name="stone_3_1" />
+    <geom type="box" pos="12.018 0.608 0.066" size="0.200 0.200 0.05" material="stone_mat" name="stone_3_2" />
+    <geom type="box" pos="12.609 -0.582 0.066" size="0.200 0.200 0.05" material="stone_mat" name="stone_4_0" />
+    <geom type="box" pos="12.607 0.014 0.066" size="0.200 0.200 0.05" material="stone_mat" name="stone_4_1" />
+    <geom type="box" pos="12.604 0.604 0.051" size="0.200 0.200 0.05" material="stone_mat" name="stone_4_2" />
+    <geom type="box" pos="13.218 -0.604 0.056" size="0.200 0.200 0.05" material="stone_mat" name="stone_5_0" />
+    <geom type="box" pos="13.205 -0.000 0.065" size="0.200 0.200 0.05" material="stone_mat" name="stone_5_1" />
+    <geom type="box" pos="13.211 0.599 0.051" size="0.200 0.200 0.05" material="stone_mat" name="stone_5_2" />
+    <geom type="box" pos="13.797 -0.592 0.064" size="0.200 0.200 0.05" material="stone_mat" name="stone_6_0" />
+    <geom type="box" pos="13.800 -0.007 0.053" size="0.200 0.200 0.05" material="stone_mat" name="stone_6_1" />
+    <geom type="box" pos="13.812 0.609 0.062" size="0.200 0.200 0.05" material="stone_mat" name="stone_6_2" />
+    <geom type="box" pos="14.395 -0.584 0.053" size="0.200 0.200 0.05" material="stone_mat" name="stone_7_0" />
+    <geom type="box" pos="14.387 -0.004 0.060" size="0.200 0.200 0.05" material="stone_mat" name="stone_7_1" />
+    <geom type="box" pos="14.392 0.590 0.059" size="0.200 0.200 0.05" material="stone_mat" name="stone_7_2" />
+    <geom type="box" pos="14.988 -0.616 0.062" size="0.200 0.200 0.05" material="stone_mat" name="stone_8_0" />
+    <geom type="box" pos="15.009 -0.005 0.069" size="0.200 0.200 0.05" material="stone_mat" name="stone_8_1" />
+    <geom type="box" pos="14.996 0.612 0.059" size="0.200 0.200 0.05" material="stone_mat" name="stone_8_2" />
+    <geom type="box" pos="18.200 -0.600 0.038" size="0.190 0.190 0.038" material="box_mat" name="box_0_0" />
+    <geom type="box" pos="18.200 -0.200 0.040" size="0.190 0.190 0.040" material="box_mat" name="box_0_1" />
+    <geom type="box" pos="18.200 0.200 0.069" size="0.190 0.190 0.069" material="box_mat" name="box_0_2" />
+    <geom type="box" pos="18.200 0.600 0.063" size="0.190 0.190 0.063" material="box_mat" name="box_0_3" />
+    <geom type="box" pos="18.600 -0.600 0.047" size="0.190 0.190 0.047" material="box_mat" name="box_1_0" />
+    <geom type="box" pos="18.600 -0.200 0.046" size="0.190 0.190 0.046" material="box_mat" name="box_1_1" />
+    <geom type="box" pos="18.600 0.200 0.039" size="0.190 0.190 0.039" material="box_mat" name="box_1_2" />
+    <geom type="box" pos="18.600 0.600 0.055" size="0.190 0.190 0.055" material="box_mat" name="box_1_3" />
+    <geom type="box" pos="19.000 -0.600 0.042" size="0.190 0.190 0.042" material="box_mat" name="box_2_0" />
+    <geom type="box" pos="19.000 -0.200 0.059" size="0.190 0.190 0.059" material="box_mat" name="box_2_1" />
+    <geom type="box" pos="19.000 0.200 0.036" size="0.190 0.190 0.036" material="box_mat" name="box_2_2" />
+    <geom type="box" pos="19.000 0.600 0.054" size="0.190 0.190 0.054" material="box_mat" name="box_2_3" />
+    <geom type="box" pos="19.400 -0.600 0.039" size="0.190 0.190 0.039" material="box_mat" name="box_3_0" />
+    <geom type="box" pos="19.400 -0.200 0.037" size="0.190 0.190 0.037" material="box_mat" name="box_3_1" />
+    <geom type="box" pos="19.400 0.200 0.075" size="0.190 0.190 0.075" material="box_mat" name="box_3_2" />
+    <geom type="box" pos="19.400 0.600 0.049" size="0.190 0.190 0.049" material="box_mat" name="box_3_3" />
+    <geom type="box" pos="19.800 -0.600 0.039" size="0.190 0.190 0.039" material="box_mat" name="box_4_0" />
+    <geom type="box" pos="19.800 -0.200 0.040" size="0.190 0.190 0.040" material="box_mat" name="box_4_1" />
+    <geom type="box" pos="19.800 0.200 0.074" size="0.190 0.190 0.074" material="box_mat" name="box_4_2" />
+    <geom type="box" pos="19.800 0.600 0.030" size="0.190 0.190 0.030" material="box_mat" name="box_4_3" />
+    <geom type="box" pos="20.200 -0.600 0.040" size="0.190 0.190 0.040" material="box_mat" name="box_5_0" />
+    <geom type="box" pos="20.200 -0.200 0.055" size="0.190 0.190 0.055" material="box_mat" name="box_5_1" />
+    <geom type="box" pos="20.200 0.200 0.040" size="0.190 0.190 0.040" material="box_mat" name="box_5_2" />
+    <geom type="box" pos="20.200 0.600 0.071" size="0.190 0.190 0.071" material="box_mat" name="box_5_3" />
+    <geom type="box" pos="20.600 -0.600 0.051" size="0.190 0.190 0.051" material="box_mat" name="box_6_0" />
+    <geom type="box" pos="20.600 -0.200 0.053" size="0.190 0.190 0.053" material="box_mat" name="box_6_1" />
+    <geom type="box" pos="20.600 0.200 0.033" size="0.190 0.190 0.033" material="box_mat" name="box_6_2" />
+    <geom type="box" pos="20.600 0.600 0.040" size="0.190 0.190 0.040" material="box_mat" name="box_6_3" />
+    <geom type="box" pos="21.000 -0.600 0.055" size="0.190 0.190 0.055" material="box_mat" name="box_7_0" />
+    <geom type="box" pos="21.000 -0.200 0.048" size="0.190 0.190 0.048" material="box_mat" name="box_7_1" />
+    <geom type="box" pos="21.000 0.200 0.048" size="0.190 0.190 0.048" material="box_mat" name="box_7_2" />
+    <geom type="box" pos="21.000 0.600 0.033" size="0.190 0.190 0.033" material="box_mat" name="box_7_3" />
+    <geom type="box" pos="21.400 -0.600 0.072" size="0.190 0.190 0.072" material="box_mat" name="box_8_0" />
+    <geom type="box" pos="21.400 -0.200 0.073" size="0.190 0.190 0.073" material="box_mat" name="box_8_1" />
+    <geom type="box" pos="21.400 0.200 0.067" size="0.190 0.190 0.067" material="box_mat" name="box_8_2" />
+    <geom type="box" pos="21.400 0.600 0.057" size="0.190 0.190 0.057" material="box_mat" name="box_8_3" />
+    <geom type="box" pos="21.800 -0.600 0.039" size="0.190 0.190 0.039" material="box_mat" name="box_9_0" />
+    <geom type="box" pos="21.800 -0.200 0.033" size="0.190 0.190 0.033" material="box_mat" name="box_9_1" />
+    <geom type="box" pos="21.800 0.200 0.039" size="0.190 0.190 0.039" material="box_mat" name="box_9_2" />
+    <geom type="box" pos="21.800 0.600 0.064" size="0.190 0.190 0.064" material="box_mat" name="box_9_3" />
+    <geom type="box" pos="22.200 -0.600 0.034" size="0.190 0.190 0.034" material="box_mat" name="box_10_0" />
+    <geom type="box" pos="22.200 -0.200 0.036" size="0.190 0.190 0.036" material="box_mat" name="box_10_1" />
+    <geom type="box" pos="22.200 0.200 0.069" size="0.190 0.190 0.069" material="box_mat" name="box_10_2" />
+    <geom type="box" pos="22.200 0.600 0.069" size="0.190 0.190 0.069" material="box_mat" name="box_10_3" />
+    <geom type="box" pos="22.600 -0.600 0.045" size="0.190 0.190 0.045" material="box_mat" name="box_11_0" />
+    <geom type="box" pos="22.600 -0.200 0.072" size="0.190 0.190 0.072" material="box_mat" name="box_11_1" />
+    <geom type="box" pos="22.600 0.200 0.067" size="0.190 0.190 0.067" material="box_mat" name="box_11_2" />
+    <geom type="box" pos="22.600 0.600 0.040" size="0.190 0.190 0.040" material="box_mat" name="box_11_3" />
+    <geom type="box" pos="23.000 -0.600 0.041" size="0.190 0.190 0.041" material="box_mat" name="box_12_0" />
+    <geom type="box" pos="23.000 -0.200 0.031" size="0.190 0.190 0.031" material="box_mat" name="box_12_1" />
+    <geom type="box" pos="23.000 0.200 0.055" size="0.190 0.190 0.055" material="box_mat" name="box_12_2" />
+    <geom type="box" pos="23.000 0.600 0.043" size="0.190 0.190 0.043" material="box_mat" name="box_12_3" />
+    <geom type="box" pos="23.400 -0.600 0.068" size="0.190 0.190 0.068" material="box_mat" name="box_13_0" />
+    <geom type="box" pos="23.400 -0.200 0.037" size="0.190 0.190 0.037" material="box_mat" name="box_13_1" />
+    <geom type="box" pos="23.400 0.200 0.059" size="0.190 0.190 0.059" material="box_mat" name="box_13_2" />
+    <geom type="box" pos="23.400 0.600 0.039" size="0.190 0.190 0.039" material="box_mat" name="box_13_3" />
+    <geom type="box" pos="23.800 -0.600 0.026" size="0.190 0.190 0.026" material="box_mat" name="box_14_0" />
+    <geom type="box" pos="23.800 -0.200 0.056" size="0.190 0.190 0.056" material="box_mat" name="box_14_1" />
+    <geom type="box" pos="23.800 0.200 0.049" size="0.190 0.190 0.049" material="box_mat" name="box_14_2" />
+    <geom type="box" pos="23.800 0.600 0.055" size="0.190 0.190 0.055" material="box_mat" name="box_14_3" />
+    <geom type="box" pos="26.150 0.0 0.040" size="0.150 1.000 0.040" material="stone_mat" name="stair_up_0" />
+    <geom type="box" pos="26.450 0.0 0.080" size="0.150 1.000 0.080" material="stone_mat" name="stair_up_1" />
+    <geom type="box" pos="26.750 0.0 0.120" size="0.150 1.000 0.120" material="stone_mat" name="stair_up_2" />
+    <geom type="box" pos="27.050 0.0 0.160" size="0.150 1.000 0.160" material="stone_mat" name="stair_up_3" />
+    <geom type="box" pos="27.350 0.0 0.200" size="0.150 1.000 0.200" material="stone_mat" name="stair_up_4" />
+    <geom type="box" pos="27.650 0.0 0.240" size="0.150 1.000 0.240" material="stone_mat" name="stair_up_5" />
+    <geom type="box" pos="27.950 0.0 0.280" size="0.150 1.000 0.280" material="stone_mat" name="stair_up_6" />
+    <geom type="box" pos="28.250 0.0 0.320" size="0.150 1.000 0.320" material="stone_mat" name="stair_up_7" />
+    <geom type="box" pos="29.400 0.0 0.320" size="1.000 1.000 0.320" material="stone_mat" name="stair_platform" />
+    <geom type="box" pos="30.550 0.0 0.320" size="0.150 1.000 0.320" material="stone_mat" name="stair_down_0" />
+    <geom type="box" pos="30.850 0.0 0.280" size="0.150 1.000 0.280" material="stone_mat" name="stair_down_1" />
+    <geom type="box" pos="31.150 0.0 0.240" size="0.150 1.000 0.240" material="stone_mat" name="stair_down_2" />
+    <geom type="box" pos="31.450 0.0 0.200" size="0.150 1.000 0.200" material="stone_mat" name="stair_down_3" />
+    <geom type="box" pos="31.750 0.0 0.160" size="0.150 1.000 0.160" material="stone_mat" name="stair_down_4" />
+    <geom type="box" pos="32.050 0.0 0.120" size="0.150 1.000 0.120" material="stone_mat" name="stair_down_5" />
+    <geom type="box" pos="32.350 0.0 0.080" size="0.150 1.000 0.080" material="stone_mat" name="stair_down_6" />
+    <geom type="box" pos="32.650 0.0 0.040" size="0.150 1.000 0.040" material="stone_mat" name="stair_down_7" />
+  </worldbody>
+
+    <actuator>
+        <motor name="fl_hipx_joint" joint="fl_hipx_joint" ctrllimited="true" ctrlrange="-76.4 76.4" gear="1" />
+        <motor name="fl_hipy_joint" joint="fl_hipy_joint" ctrllimited="true" ctrlrange="-76.4 76.4" gear="1" />
+        <motor name="fl_knee_joint" joint="fl_knee_joint" ctrllimited="true" ctrlrange="-76.4 76.4" gear="1" />
+        <motor name="fl_wheel_joint" joint="fl_wheel_joint" ctrllimited="true" ctrlrange="-21.6 21.6" gear="1" />
+        <motor name="fr_hipx_joint" joint="fr_hipx_joint" ctrllimited="true" ctrlrange="-76.4 76.4" gear="1" />
+        <motor name="fr_hipy_joint" joint="fr_hipy_joint" ctrllimited="true" ctrlrange="-76.4 76.4" gear="1" />
+        <motor name="fr_knee_joint" joint="fr_knee_joint" ctrllimited="true" ctrlrange="-76.4 76.4" gear="1" />
+        <motor name="fr_wheel_joint" joint="fr_wheel_joint" ctrllimited="true" ctrlrange="-21.6 21.6" gear="1" />
+        <motor name="hl_hipx_joint" joint="hl_hipx_joint" ctrllimited="true" ctrlrange="-76.4 76.4" gear="1" />
+        <motor name="hl_hipy_joint" joint="hl_hipy_joint" ctrllimited="true" ctrlrange="-76.4 76.4" gear="1" />
+        <motor name="hl_knee_joint" joint="hl_knee_joint" ctrllimited="true" ctrlrange="-76.4 76.4" gear="1" />
+        <motor name="hl_wheel_joint" joint="hl_wheel_joint" ctrllimited="true" ctrlrange="-21.6 21.6" gear="1" />
+        <motor name="hr_hipx_joint" joint="hr_hipx_joint" ctrllimited="true" ctrlrange="-76.4 76.4" gear="1" />
+        <motor name="hr_hipy_joint" joint="hr_hipy_joint" ctrllimited="true" ctrlrange="-76.4 76.4" gear="1" />
+        <motor name="hr_knee_joint" joint="hr_knee_joint" ctrllimited="true" ctrlrange="-76.4 76.4" gear="1" />
+        <motor name="hr_wheel_joint" joint="hr_wheel_joint" ctrllimited="true" ctrlrange="-21.6 21.6" gear="1" />
+    </actuator>
+
+    <contact>
+        <exclude body1="base_link" body2="fl_hipx" />
+        <exclude body1="fl_hipx" body2="fl_hipy" />
+        <exclude body1="fl_hipy" body2="fl_knee" />
+        <exclude body1="fl_knee" body2="fl_wheel" />
+
+        <exclude body1="base_link" body2="fr_hipx" />
+        <exclude body1="fr_hipx" body2="fr_hipy" />
+        <exclude body1="fr_hipy" body2="fr_knee" />
+        <exclude body1="fr_knee" body2="fr_wheel" />
+
+        <exclude body1="base_link" body2="hl_hipx" />
+        <exclude body1="hl_hipx" body2="hl_hipy" />
+        <exclude body1="hl_hipy" body2="hl_knee" />
+        <exclude body1="hl_knee" body2="hl_wheel" />
+
+        <exclude body1="base_link" body2="hr_hipx" />
+        <exclude body1="hr_hipx" body2="hr_hipy" />
+        <exclude body1="hr_hipy" body2="hr_knee" />
+        <exclude body1="hr_knee" body2="hr_wheel" />
+
+    </contact>
+
+    <sensor>
+        
+        <framequat name="base_quat" objtype="site" objname="base_site" />
+        
+        
+        
+        <accelerometer site="imu_site" />
+        <gyro site="imu_site" />
+
+    </sensor>
+</mujoco>

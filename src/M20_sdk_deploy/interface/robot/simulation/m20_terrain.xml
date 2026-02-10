@@ -1,0 +1,123 @@
+<?xml version="1.0" ?>
+<mujoco model="M20_Terrain">
+  <compiler angle="degree" coordinate="local" inertiafromgeom="true"/>
+  <option timestep="0.002" gravity="0 0 -9.81" iterations="50" tolerance="1e-10"/>
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="0.3 0.5 0.7" rgb2="0 0 0" width="512" height="307"/>
+    <texture name="grid" type="2d" builtin="checker" width="512" height="512" rgb1=".1 .2 .3" rgb2=".2 .3 .4"/>
+    <material name="grid_mat" texture="grid" texrepeat="1 1" texuniform="true" reflectance=".2"/>
+    <material name="stone_mat" rgba="0.7 0.7 0.7 1"/>
+    <material name="rail_mat" rgba="0.8 0.2 0.2 1"/>
+    <material name="box_mat" rgba="0.3 0.8 0.3 1"/>
+  </asset>
+  <worldbody>
+    <geom name="floor" type="plane" size="0 0 0.05" material="grid_mat" condim="3"/>
+    <light name="sun" mode="targetbodycom" target="floor" diffuse=".8 .8 .8" dir="0 0 -1" pos="0 0 10"/>
+    <geom type="box" pos="5.000 0.0 0.050" size="3.000 0.100 0.050" material="rail_mat" name="rail_1"/>
+    <geom type="box" pos="5.000 1.0 0.050" size="3.000 0.100 0.050" material="rail_mat" name="rail_2"/>
+    <geom type="box" pos="10.217 -0.590 0.070" size="0.200 0.200 0.05" material="stone_mat" name="stone_0_0"/>
+    <geom type="box" pos="10.195 -0.018 0.054" size="0.200 0.200 0.05" material="stone_mat" name="stone_0_1"/>
+    <geom type="box" pos="10.213 0.594 0.069" size="0.200 0.200 0.05" material="stone_mat" name="stone_0_2"/>
+    <geom type="box" pos="10.813 -0.587 0.062" size="0.200 0.200 0.05" material="stone_mat" name="stone_1_0"/>
+    <geom type="box" pos="10.813 -0.001 0.065" size="0.200 0.200 0.05" material="stone_mat" name="stone_1_1"/>
+    <geom type="box" pos="10.787 0.582 0.062" size="0.200 0.200 0.05" material="stone_mat" name="stone_1_2"/>
+    <geom type="box" pos="11.398 -0.581 0.053" size="0.200 0.200 0.05" material="stone_mat" name="stone_2_0"/>
+    <geom type="box" pos="11.401 0.020 0.052" size="0.200 0.200 0.05" material="stone_mat" name="stone_2_1"/>
+    <geom type="box" pos="11.402 0.584 0.050" size="0.200 0.200 0.05" material="stone_mat" name="stone_2_2"/>
+    <geom type="box" pos="12.020 -0.599 0.062" size="0.200 0.200 0.05" material="stone_mat" name="stone_3_0"/>
+    <geom type="box" pos="12.013 -0.009 0.051" size="0.200 0.200 0.05" material="stone_mat" name="stone_3_1"/>
+    <geom type="box" pos="12.018 0.608 0.066" size="0.200 0.200 0.05" material="stone_mat" name="stone_3_2"/>
+    <geom type="box" pos="12.609 -0.582 0.066" size="0.200 0.200 0.05" material="stone_mat" name="stone_4_0"/>
+    <geom type="box" pos="12.607 0.014 0.066" size="0.200 0.200 0.05" material="stone_mat" name="stone_4_1"/>
+    <geom type="box" pos="12.604 0.604 0.051" size="0.200 0.200 0.05" material="stone_mat" name="stone_4_2"/>
+    <geom type="box" pos="13.218 -0.604 0.056" size="0.200 0.200 0.05" material="stone_mat" name="stone_5_0"/>
+    <geom type="box" pos="13.205 -0.000 0.065" size="0.200 0.200 0.05" material="stone_mat" name="stone_5_1"/>
+    <geom type="box" pos="13.211 0.599 0.051" size="0.200 0.200 0.05" material="stone_mat" name="stone_5_2"/>
+    <geom type="box" pos="13.797 -0.592 0.064" size="0.200 0.200 0.05" material="stone_mat" name="stone_6_0"/>
+    <geom type="box" pos="13.800 -0.007 0.053" size="0.200 0.200 0.05" material="stone_mat" name="stone_6_1"/>
+    <geom type="box" pos="13.812 0.609 0.062" size="0.200 0.200 0.05" material="stone_mat" name="stone_6_2"/>
+    <geom type="box" pos="14.395 -0.584 0.053" size="0.200 0.200 0.05" material="stone_mat" name="stone_7_0"/>
+    <geom type="box" pos="14.387 -0.004 0.060" size="0.200 0.200 0.05" material="stone_mat" name="stone_7_1"/>
+    <geom type="box" pos="14.392 0.590 0.059" size="0.200 0.200 0.05" material="stone_mat" name="stone_7_2"/>
+    <geom type="box" pos="14.988 -0.616 0.062" size="0.200 0.200 0.05" material="stone_mat" name="stone_8_0"/>
+    <geom type="box" pos="15.009 -0.005 0.069" size="0.200 0.200 0.05" material="stone_mat" name="stone_8_1"/>
+    <geom type="box" pos="14.996 0.612 0.059" size="0.200 0.200 0.05" material="stone_mat" name="stone_8_2"/>
+    <geom type="box" pos="18.200 -0.600 0.038" size="0.190 0.190 0.038" material="box_mat" name="box_0_0"/>
+    <geom type="box" pos="18.200 -0.200 0.040" size="0.190 0.190 0.040" material="box_mat" name="box_0_1"/>
+    <geom type="box" pos="18.200 0.200 0.069" size="0.190 0.190 0.069" material="box_mat" name="box_0_2"/>
+    <geom type="box" pos="18.200 0.600 0.063" size="0.190 0.190 0.063" material="box_mat" name="box_0_3"/>
+    <geom type="box" pos="18.600 -0.600 0.047" size="0.190 0.190 0.047" material="box_mat" name="box_1_0"/>
+    <geom type="box" pos="18.600 -0.200 0.046" size="0.190 0.190 0.046" material="box_mat" name="box_1_1"/>
+    <geom type="box" pos="18.600 0.200 0.039" size="0.190 0.190 0.039" material="box_mat" name="box_1_2"/>
+    <geom type="box" pos="18.600 0.600 0.055" size="0.190 0.190 0.055" material="box_mat" name="box_1_3"/>
+    <geom type="box" pos="19.000 -0.600 0.042" size="0.190 0.190 0.042" material="box_mat" name="box_2_0"/>
+    <geom type="box" pos="19.000 -0.200 0.059" size="0.190 0.190 0.059" material="box_mat" name="box_2_1"/>
+    <geom type="box" pos="19.000 0.200 0.036" size="0.190 0.190 0.036" material="box_mat" name="box_2_2"/>
+    <geom type="box" pos="19.000 0.600 0.054" size="0.190 0.190 0.054" material="box_mat" name="box_2_3"/>
+    <geom type="box" pos="19.400 -0.600 0.039" size="0.190 0.190 0.039" material="box_mat" name="box_3_0"/>
+    <geom type="box" pos="19.400 -0.200 0.037" size="0.190 0.190 0.037" material="box_mat" name="box_3_1"/>
+    <geom type="box" pos="19.400 0.200 0.075" size="0.190 0.190 0.075" material="box_mat" name="box_3_2"/>
+    <geom type="box" pos="19.400 0.600 0.049" size="0.190 0.190 0.049" material="box_mat" name="box_3_3"/>
+    <geom type="box" pos="19.800 -0.600 0.039" size="0.190 0.190 0.039" material="box_mat" name="box_4_0"/>
+    <geom type="box" pos="19.800 -0.200 0.040" size="0.190 0.190 0.040" material="box_mat" name="box_4_1"/>
+    <geom type="box" pos="19.800 0.200 0.074" size="0.190 0.190 0.074" material="box_mat" name="box_4_2"/>
+    <geom type="box" pos="19.800 0.600 0.030" size="0.190 0.190 0.030" material="box_mat" name="box_4_3"/>
+    <geom type="box" pos="20.200 -0.600 0.040" size="0.190 0.190 0.040" material="box_mat" name="box_5_0"/>
+    <geom type="box" pos="20.200 -0.200 0.055" size="0.190 0.190 0.055" material="box_mat" name="box_5_1"/>
+    <geom type="box" pos="20.200 0.200 0.040" size="0.190 0.190 0.040" material="box_mat" name="box_5_2"/>
+    <geom type="box" pos="20.200 0.600 0.071" size="0.190 0.190 0.071" material="box_mat" name="box_5_3"/>
+    <geom type="box" pos="20.600 -0.600 0.051" size="0.190 0.190 0.051" material="box_mat" name="box_6_0"/>
+    <geom type="box" pos="20.600 -0.200 0.053" size="0.190 0.190 0.053" material="box_mat" name="box_6_1"/>
+    <geom type="box" pos="20.600 0.200 0.033" size="0.190 0.190 0.033" material="box_mat" name="box_6_2"/>
+    <geom type="box" pos="20.600 0.600 0.040" size="0.190 0.190 0.040" material="box_mat" name="box_6_3"/>
+    <geom type="box" pos="21.000 -0.600 0.055" size="0.190 0.190 0.055" material="box_mat" name="box_7_0"/>
+    <geom type="box" pos="21.000 -0.200 0.048" size="0.190 0.190 0.048" material="box_mat" name="box_7_1"/>
+    <geom type="box" pos="21.000 0.200 0.048" size="0.190 0.190 0.048" material="box_mat" name="box_7_2"/>
+    <geom type="box" pos="21.000 0.600 0.033" size="0.190 0.190 0.033" material="box_mat" name="box_7_3"/>
+    <geom type="box" pos="21.400 -0.600 0.072" size="0.190 0.190 0.072" material="box_mat" name="box_8_0"/>
+    <geom type="box" pos="21.400 -0.200 0.073" size="0.190 0.190 0.073" material="box_mat" name="box_8_1"/>
+    <geom type="box" pos="21.400 0.200 0.067" size="0.190 0.190 0.067" material="box_mat" name="box_8_2"/>
+    <geom type="box" pos="21.400 0.600 0.057" size="0.190 0.190 0.057" material="box_mat" name="box_8_3"/>
+    <geom type="box" pos="21.800 -0.600 0.039" size="0.190 0.190 0.039" material="box_mat" name="box_9_0"/>
+    <geom type="box" pos="21.800 -0.200 0.033" size="0.190 0.190 0.033" material="box_mat" name="box_9_1"/>
+    <geom type="box" pos="21.800 0.200 0.039" size="0.190 0.190 0.039" material="box_mat" name="box_9_2"/>
+    <geom type="box" pos="21.800 0.600 0.064" size="0.190 0.190 0.064" material="box_mat" name="box_9_3"/>
+    <geom type="box" pos="22.200 -0.600 0.034" size="0.190 0.190 0.034" material="box_mat" name="box_10_0"/>
+    <geom type="box" pos="22.200 -0.200 0.036" size="0.190 0.190 0.036" material="box_mat" name="box_10_1"/>
+    <geom type="box" pos="22.200 0.200 0.069" size="0.190 0.190 0.069" material="box_mat" name="box_10_2"/>
+    <geom type="box" pos="22.200 0.600 0.069" size="0.190 0.190 0.069" material="box_mat" name="box_10_3"/>
+    <geom type="box" pos="22.600 -0.600 0.045" size="0.190 0.190 0.045" material="box_mat" name="box_11_0"/>
+    <geom type="box" pos="22.600 -0.200 0.072" size="0.190 0.190 0.072" material="box_mat" name="box_11_1"/>
+    <geom type="box" pos="22.600 0.200 0.067" size="0.190 0.190 0.067" material="box_mat" name="box_11_2"/>
+    <geom type="box" pos="22.600 0.600 0.040" size="0.190 0.190 0.040" material="box_mat" name="box_11_3"/>
+    <geom type="box" pos="23.000 -0.600 0.041" size="0.190 0.190 0.041" material="box_mat" name="box_12_0"/>
+    <geom type="box" pos="23.000 -0.200 0.031" size="0.190 0.190 0.031" material="box_mat" name="box_12_1"/>
+    <geom type="box" pos="23.000 0.200 0.055" size="0.190 0.190 0.055" material="box_mat" name="box_12_2"/>
+    <geom type="box" pos="23.000 0.600 0.043" size="0.190 0.190 0.043" material="box_mat" name="box_12_3"/>
+    <geom type="box" pos="23.400 -0.600 0.068" size="0.190 0.190 0.068" material="box_mat" name="box_13_0"/>
+    <geom type="box" pos="23.400 -0.200 0.037" size="0.190 0.190 0.037" material="box_mat" name="box_13_1"/>
+    <geom type="box" pos="23.400 0.200 0.059" size="0.190 0.190 0.059" material="box_mat" name="box_13_2"/>
+    <geom type="box" pos="23.400 0.600 0.039" size="0.190 0.190 0.039" material="box_mat" name="box_13_3"/>
+    <geom type="box" pos="23.800 -0.600 0.026" size="0.190 0.190 0.026" material="box_mat" name="box_14_0"/>
+    <geom type="box" pos="23.800 -0.200 0.056" size="0.190 0.190 0.056" material="box_mat" name="box_14_1"/>
+    <geom type="box" pos="23.800 0.200 0.049" size="0.190 0.190 0.049" material="box_mat" name="box_14_2"/>
+    <geom type="box" pos="23.800 0.600 0.055" size="0.190 0.190 0.055" material="box_mat" name="box_14_3"/>
+    <geom type="box" pos="26.150 0.0 0.040" size="0.150 1.000 0.040" material="stone_mat" name="stair_up_0"/>
+    <geom type="box" pos="26.450 0.0 0.080" size="0.150 1.000 0.080" material="stone_mat" name="stair_up_1"/>
+    <geom type="box" pos="26.750 0.0 0.120" size="0.150 1.000 0.120" material="stone_mat" name="stair_up_2"/>
+    <geom type="box" pos="27.050 0.0 0.160" size="0.150 1.000 0.160" material="stone_mat" name="stair_up_3"/>
+    <geom type="box" pos="27.350 0.0 0.200" size="0.150 1.000 0.200" material="stone_mat" name="stair_up_4"/>
+    <geom type="box" pos="27.650 0.0 0.240" size="0.150 1.000 0.240" material="stone_mat" name="stair_up_5"/>
+    <geom type="box" pos="27.950 0.0 0.280" size="0.150 1.000 0.280" material="stone_mat" name="stair_up_6"/>
+    <geom type="box" pos="28.250 0.0 0.320" size="0.150 1.000 0.320" material="stone_mat" name="stair_up_7"/>
+    <geom type="box" pos="29.400 0.0 0.320" size="1.000 1.000 0.320" material="stone_mat" name="stair_platform"/>
+    <geom type="box" pos="30.550 0.0 0.320" size="0.150 1.000 0.320" material="stone_mat" name="stair_down_0"/>
+    <geom type="box" pos="30.850 0.0 0.280" size="0.150 1.000 0.280" material="stone_mat" name="stair_down_1"/>
+    <geom type="box" pos="31.150 0.0 0.240" size="0.150 1.000 0.240" material="stone_mat" name="stair_down_2"/>
+    <geom type="box" pos="31.450 0.0 0.200" size="0.150 1.000 0.200" material="stone_mat" name="stair_down_3"/>
+    <geom type="box" pos="31.750 0.0 0.160" size="0.150 1.000 0.160" material="stone_mat" name="stair_down_4"/>
+    <geom type="box" pos="32.050 0.0 0.120" size="0.150 1.000 0.120" material="stone_mat" name="stair_down_5"/>
+    <geom type="box" pos="32.350 0.0 0.080" size="0.150 1.000 0.080" material="stone_mat" name="stair_down_6"/>
+    <geom type="box" pos="32.650 0.0 0.040" size="0.150 1.000 0.040" material="stone_mat" name="stair_down_7"/>
+  </worldbody>
+</mujoco>
