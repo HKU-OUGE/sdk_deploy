@@ -17,7 +17,9 @@
 #include "quadruped_wheel/joint_damping_state.hpp"
 #include "quadruped_wheel/rl_control_state.hpp"
 #include "keyboard_interface.hpp"
+#include "joy_interface.h"
 #include "hardware/m20_interface.hpp"
+
 
 namespace qw{
 class QwStateMachine : public StateMachineBase{
@@ -41,7 +43,9 @@ public:
     void Start(){
         if(remote_cmd_type_ == RemoteCommandType::kKeyBoard){
             uc_ptr_ = std::make_shared<KeyboardInterface>(robot_name_);
-        }else{
+        } else if (remote_cmd_type_ == RemoteCommandType::kJoy) { // <--- 添加这部分
+            uc_ptr_ = std::make_shared<JoyInterface>(robot_name_);
+        } else{
             std::cerr << "error user command interface! " << std::endl;
             exit(0);
         }

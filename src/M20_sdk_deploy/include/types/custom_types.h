@@ -28,6 +28,7 @@ namespace types{
 
     enum RemoteCommandType{
         kKeyBoard = 0,
+        kJoy = 1, // <--- 添加这一行
     };
     
 
