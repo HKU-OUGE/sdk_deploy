@@ -82,7 +82,7 @@ namespace qw {
             if (robot_name_ == RobotName::M20) {
                 namespace fs = std::filesystem;
                 fs::path base = fs::path(__FILE__).parent_path();
-                auto model_path = fs::canonical(base / ".." / ".." / "policy" / "policy_blind_easy.onnx");
+                auto model_path = fs::canonical(base / ".." / ".." / "policy" / "policy_blind_hard.onnx");
                 m20_policy_ = std::make_shared<M20PolicyRunner>("m20_policy", model_path.string());
             }
 

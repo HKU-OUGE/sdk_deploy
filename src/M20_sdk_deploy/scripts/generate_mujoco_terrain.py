@@ -89,30 +89,24 @@ class MujocoTerrainGenerator:
                               
         self.current_x += length + 2.0
 
-    def add_rails(self, length=10.0, rail_width=0.1, rail_height=0.15):
-        """模仿 MeshRailsTerrainCfg"""
-        print(f"Generating Rails at X > {self.current_x}...")
-        
-        # 生成两段独木桥
+    def add_rails(self, length=2.0, rail_width=0.15, rail_height=0.15, yaw=90):
+        """生成独木桥/跨栏障碍。如果 yaw=90，则变为横向的障碍物"""
+        print(f"Generating Rails (Yaw={yaw} deg) at X > {self.current_x}...")
         start_x = self.current_x
         
-        # Rail 1
-        ET.SubElement(self.worldbody, "geom",
-                      type="box",
-                      pos=f"{start_x + length/2:.3f} 0.0 {rail_height/2:.3f}",
-                      size=f"{length/2:.3f} {rail_width/2:.3f} {rail_height/2:.3f}",
-                      material="rail_mat",
-                      name=f"rail_1")
+        # 如果旋转90度，它在X轴上的实际跨度就变成了宽度
+        eff_x_len = rail_width if yaw == 90 else length
         
-        # Rail 2 (Side step)
         ET.SubElement(self.worldbody, "geom",
                       type="box",
-                      pos=f"{start_x + length/2:.3f} 1.0 {rail_height/2:.3f}",
+                      pos=f"{start_x + eff_x_len/2:.3f} 0.0 {rail_height/2:.3f}",
+                      # 注意 MuJoCo size 是 half-size 
                       size=f"{length/2:.3f} {rail_width/2:.3f} {rail_height/2:.3f}",
+                      euler=f"0 0 {yaw}", # 添加 Z 轴旋转
                       material="rail_mat",
-                      name=f"rail_2")
+                      name=f"rail_rotated")
 
-        self.current_x += length + 2.0
+        self.current_x += eff_x_len + 2.0
 
     def add_stairs(self, steps=10, step_run=0.3, step_rise=0.1, width=2.0):
         """模仿 MeshInvertedPyramidStairsTerrainCfg (简化版：单向楼梯)"""
@@ -158,8 +152,52 @@ class MujocoTerrainGenerator:
 
         self.current_x += (steps * 2 * step_run + platform_len) + 2.0
 
+    def add_slope(self, length=2.0, angle=30.0, width=2.0, thickness=0.05):
+        """生成给定角度的斜坡 (上坡 -> 平台 -> 下坡)"""
+        print(f"Generating {angle}-degree Slope at X > {self.current_x}...")
+        
+        start_x = self.current_x
+        angle_rad = np.radians(angle)
+        
+        # 投影到 X 轴和 Z 轴的长度
+        ramp_x_len = length * np.cos(angle_rad)
+        ramp_z_height = length * np.sin(angle_rad)
+        
+        # 1. 上坡 (沿 Y 轴向上俯仰)
+        x_up = start_x + ramp_x_len / 2
+        z_up = ramp_z_height / 2
+        ET.SubElement(self.worldbody, "geom", type="box",
+                      pos=f"{x_up:.3f} 0.0 {z_up:.3f}",
+                      size=f"{length/2:.3f} {width/2:.3f} {thickness:.3f}",
+                      # 使用 angle_rad 代替 angle
+                      euler=f"0 {-angle_rad:.3f} 0",  
+                      material="stone_mat", name="slope_up")
+        
+        # 2. 平台
+        plat_len = 2.0
+        x_plat_start = start_x + ramp_x_len
+        x_plat = x_plat_start + plat_len / 2
+        z_plat = ramp_z_height
+        
+        ET.SubElement(self.worldbody, "geom", type="box",
+                      pos=f"{x_plat:.3f} 0.0 {z_plat - thickness * np.cos(angle_rad):.3f}", 
+                      size=f"{plat_len/2:.3f} {width/2:.3f} {thickness:.3f}",
+                      material="stone_mat", name="slope_platform")
+                      
+        # 3. 下坡 (沿 Y 轴向下俯仰)
+        x_down_start = x_plat_start + plat_len
+        x_down = x_down_start + ramp_x_len / 2
+        z_down = ramp_z_height / 2
+        ET.SubElement(self.worldbody, "geom", type="box",
+                      pos=f"{x_down:.3f} 0.0 {z_down:.3f}",
+                      size=f"{length/2:.3f} {width/2:.3f} {thickness:.3f}",
+                      # 使用 angle_rad 代替 angle
+                      euler=f"0 {angle_rad:.3f} 0",  
+                      material="stone_mat", name="slope_down")
+
+        self.current_x += (ramp_x_len * 2 + plat_len) + 2.0
+
     def save(self):
-        # 美化 XML
         raw_string = ET.tostring(self.root, 'utf-8')
         reparsed = minidom.parseString(raw_string)
         pretty_string = reparsed.toprettyxml(indent="  ")
@@ -169,19 +207,16 @@ class MujocoTerrainGenerator:
         print(f"Successfully generated terrain file: {self.output_file}")
 
 if __name__ == "__main__":
-    # 配置你的地形生成参数
     gen = MujocoTerrainGenerator("m20_terrain.xml")
     
-    # 1. 独木桥
-    gen.add_rails(length=6.0, rail_width=0.2, rail_height=0.1)
+    # 1. 生成 15cm 的 rail 并旋转 90 度
+    # length=3.0 让障碍物够宽不至于让机器人绕过去，rail_width和height均为0.15m
+    gen.add_rails(length=3.0, rail_width=0.15, rail_height=0.15, yaw=90)
     
-    # 2. 梅花桩 (模拟 Stepping Stones)
-    gen.add_stepping_stones(length=6.0, stone_size=0.4, gap=0.2, height_noise=0.02)
+    # 2. 生成 20cm (0.2m) 的楼梯
+    gen.add_stairs(steps=8, step_run=0.3, step_rise=0.2)
     
-    # 3. 乱石阵 (模拟 Random Boxes)
-    gen.add_random_boxes(length=6.0, grid_size=0.4, height_range=(0.05, 0.15))
-    
-    # 4. 楼梯 (模拟 Stairs)
-    gen.add_stairs(steps=8, step_run=0.3, step_rise=0.08)
+    # 3. 生成 30度 的斜坡
+    gen.add_slope(length=2.5, angle=30)
     
     gen.save()

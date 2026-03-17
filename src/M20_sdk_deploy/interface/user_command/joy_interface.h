@@ -31,10 +31,14 @@ private:
     std::vector<int> button_values_;
 
     // --- 手柄映射 (Logitech F710 XInput 模式) ---
-    // 轴索引 (Linux js API 原始索引)
+    // 摇杆轴索引 (Linux js API 原始索引)
     const int RAW_AXIS_LX = 0; // 左摇杆 X (左右)
     const int RAW_AXIS_LY = 1; // 左摇杆 Y (上下)
     const int RAW_AXIS_RX = 3; // 右摇杆 X (转向)
+
+    // 新增：十字键轴索引
+    const int RAW_AXIS_DPAD_X = 6; // 十字键 X (左右)
+    const int RAW_AXIS_DPAD_Y = 7; // 十字键 Y (上下)
 
     // 按键索引
     const int RAW_BTN_A = 0;
@@ -43,8 +47,8 @@ private:
     const int RAW_BTN_Y = 3;
 
     // 速度参数
-    float max_forward_ = 1.0f;
-    float max_side_    = 0.5f;
+    float max_forward_ = 0.5f;
+    float max_side_    = 1.0f;
     float max_yaw_     = 1.0f;
 
     // 辅助函数：将 raw short (-32767~32767) 归一化为 float (-1.0~1.0)
@@ -79,6 +83,7 @@ private:
                     std::cout << "  > Press 'B' for Damping\n";
                     std::cout << "  > Press 'A' for Stand Up\n";
                     std::cout << "  > Press 'X' for RL Control\n";
+                    std::cout << "  > Use Left Stick or D-Pad to move\n";
                 } else {
                     // 如果打开失败，每秒重试一次
                     std::this_thread::sleep_for(std::chrono::seconds(1));
@@ -117,26 +122,42 @@ private:
             // --- 模式切换逻辑 ---
             if (button_values_[RAW_BTN_B]) {
                  usr_cmd_->target_mode = uint8_t(RobotMotionState::JointDamping);
-                 // std::cout << "\r[CMD] Joint Damping    " << std::flush;
             }
             else if (button_values_[RAW_BTN_A]) {
                 if (msfb_->GetCurrentState() == RobotMotionState::WaitingForStand) {
                     usr_cmd_->target_mode = uint8_t(RobotMotionState::StandingUp);
-                    // std::cout << "\r[CMD] Standing Up      " << std::flush;
                 }
             }
             else if (button_values_[RAW_BTN_X]) {
                 if (msfb_->GetCurrentState() == RobotMotionState::StandingUp) {
                     usr_cmd_->target_mode = uint8_t(RobotMotionState::RLControlMode);
-                    // std::cout << "\r[CMD] RL Control       " << std::flush;
                 }
             }
 
             // --- 速度控制逻辑 ---
             if (msfb_->GetCurrentState() == RobotMotionState::RLControlMode) {
-                // 注意：Linux Joystick Y轴通常向下为正，所以前进(向上推)是负值，需要取反
-                float fwd = -normalize_axis(axis_values_[RAW_AXIS_LY]);
-                float side = -normalize_axis(axis_values_[RAW_AXIS_LX]);
+                
+                // 读取左摇杆
+                float stick_fwd  = -normalize_axis(axis_values_[RAW_AXIS_LY]);
+                float stick_side = -normalize_axis(axis_values_[RAW_AXIS_LX]);
+                
+                // 读取十字键 (D-Pad)
+                float dpad_fwd   = -normalize_axis(axis_values_[RAW_AXIS_DPAD_Y]);
+                float dpad_side  = -normalize_axis(axis_values_[RAW_AXIS_DPAD_X]);
+
+                float fwd = 0.0f;
+                float side = 0.0f;
+
+                // 逻辑：如果十字键有输入，优先使用十字键；否则使用左摇杆
+                if (std::abs(dpad_fwd) > 0.1f || std::abs(dpad_side) > 0.1f) {
+                    fwd  = dpad_fwd;
+                    side = dpad_side;
+                } else {
+                    fwd  = stick_fwd;
+                    side = stick_side;
+                }
+
+                // 右摇杆控制转向 (Yaw)
                 float yaw = -normalize_axis(axis_values_[RAW_AXIS_RX]);
 
                 usr_cmd_->forward_vel_scale  = fwd * max_forward_;
