@@ -1,6 +1,6 @@
 /**
- * @file joy_interface.hpp
- * @brief Direct Joystick Driver for M20 (Bypasses ROS DDS isolation)
+ * @file joy_interface.h
+ * @brief Dual-Mode Joystick Driver for M20 (Supports Local USB & Remote UDP)
  */
 #pragma once
 
@@ -11,14 +11,30 @@
 #include <cmath>
 #include <iostream>
 #include <vector>
+#include <chrono>
+
+// USB 手柄所需头文件
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/ioctl.h>
 #include <linux/joystick.h>
-#include <chrono>
+
+// UDP 通信所需头文件
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <cstring>
 
 using namespace interface;
 using namespace types;
+
+// 定义和 Python 端一致的数据包结构
+#pragma pack(push, 1)
+struct JoyDataPacket {
+    int32_t axes[8];
+    int32_t buttons[16];
+};
+#pragma pack(pop)
 
 class JoyInterface : public UserCommandInterface
 {
@@ -31,29 +47,24 @@ private:
     std::vector<int> button_values_;
 
     // --- 手柄映射 (Logitech F710 XInput 模式) ---
-    // 摇杆轴索引 (Linux js API 原始索引)
-    const int RAW_AXIS_LX = 0; // 左摇杆 X (左右)
-    const int RAW_AXIS_LY = 1; // 左摇杆 Y (上下)
-    const int RAW_AXIS_RX = 3; // 右摇杆 X (转向)
+    const int RAW_AXIS_LX = 0;
+    const int RAW_AXIS_LY = 1;
+    const int RAW_AXIS_RX = 3;
 
-    // 新增：十字键轴索引
-    const int RAW_AXIS_DPAD_X = 6; // 十字键 X (左右)
-    const int RAW_AXIS_DPAD_Y = 7; // 十字键 Y (上下)
+    const int RAW_AXIS_DPAD_X = 6;
+    const int RAW_AXIS_DPAD_Y = 7;
 
-    // 按键索引
     const int RAW_BTN_A = 0;
     const int RAW_BTN_B = 1;
     const int RAW_BTN_X = 2;
     const int RAW_BTN_Y = 3;
 
-    // 速度参数
     float max_forward_ = 0.5f;
     float max_side_    = 1.0f;
     float max_yaw_     = 1.0f;
 
-    // 辅助函数：将 raw short (-32767~32767) 归一化为 float (-1.0~1.0)
     float normalize_axis(int val) {
-        const int deadzone = 4000; // 死区
+        const int deadzone = 4000;
         if (std::abs(val) < deadzone) return 0.0f;
         return static_cast<float>(val) / 32767.0f;
     }
@@ -65,62 +76,85 @@ private:
     }
 
     void poll_loop() {
-        const char* device_path = "/dev/input/js0";
-        int fd = -1;
-
-        // 初始状态缓存 (足够容纳常见手柄)
         axis_values_.resize(16, 0);
         button_values_.resize(16, 0);
 
-        std::cout << "[JoyInterface] Driver thread started. Trying to open " << device_path << "...\n";
+        // ================= [初始化 UDP 通信] =================
+        int sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+        if (sockfd >= 0) {
+            struct sockaddr_in servaddr;
+            memset(&servaddr, 0, sizeof(servaddr));
+            servaddr.sin_family = AF_INET;
+            servaddr.sin_addr.s_addr = INADDR_ANY;
+            servaddr.sin_port = htons(9999);
+
+            // 将 UDP Socket 设置为非阻塞模式
+            int flags = fcntl(sockfd, F_GETFL, 0);
+            fcntl(sockfd, F_SETFL, flags | O_NONBLOCK);
+            bind(sockfd, (const struct sockaddr *)&servaddr, sizeof(servaddr));
+        }
+
+        // ================= [初始化 USB 手柄] =================
+        const char* device_path = "/dev/input/js0";
+        int fd_js = -1;
+
+        double last_recv_time = GetCurrentTimeStamp();
+
+        std::cout << "\n[JoyInterface] >>> SUCCESS: Dual-Mode Initialized! <<<\n";
+        std::cout << "  > Mode 1: Auto-detect local USB Joystick at " << device_path << "\n";
+        std::cout << "  > Mode 2: Listening for UDP remote data on port 9999\n";
 
         while (running_) {
-            // 1. 尝试打开设备
-            if (fd < 0) {
-                fd = open(device_path, O_RDONLY | O_NONBLOCK);
-                if (fd >= 0) {
-                    std::cout << "\n[JoyInterface] >>> SUCCESS: Joystick Connected directly! <<<\n";
-                    std::cout << "  > Press 'B' for Damping\n";
-                    std::cout << "  > Press 'A' for Stand Up\n";
-                    std::cout << "  > Press 'X' for RL Control (Blind)\n";
-                    std::cout << "  > Press 'Y' for RL Sensor Control (Perception)\n";
-                    std::cout << "  > Use Left Stick or D-Pad to move\n";
-                } else {
-                    // 如果打开失败，每秒重试一次
-                    std::this_thread::sleep_for(std::chrono::seconds(1));
-                    continue;
+            bool received_data = false;
+
+            // --- 1. 尝试读取本地 USB 手柄 (非阻塞) ---
+            if (fd_js < 0) {
+                fd_js = open(device_path, O_RDONLY | O_NONBLOCK);
+            }
+            if (fd_js >= 0) {
+                struct js_event js;
+                while (read(fd_js, &js, sizeof(js)) > 0) {
+                    received_data = true;
+                    switch (js.type & ~JS_EVENT_INIT) {
+                        case JS_EVENT_AXIS:
+                            if (js.number < axis_values_.size()) axis_values_[js.number] = js.value;
+                            break;
+                        case JS_EVENT_BUTTON:
+                            if (js.number < button_values_.size()) button_values_[js.number] = js.value;
+                            break;
+                    }
+                }
+                // 检查设备是否被拔出
+                if (errno != EAGAIN && errno != EWOULDBLOCK) {
+                    close(fd_js); fd_js = -1;
                 }
             }
 
-            // 2. 读取事件
-            struct js_event js;
-            while (read(fd, &js, sizeof(js)) > 0) {
-                // 处理事件
-                switch (js.type & ~JS_EVENT_INIT) {
-                    case JS_EVENT_AXIS:
-                        if (js.number < axis_values_.size())
-                            axis_values_[js.number] = js.value;
-                        break;
-                    case JS_EVENT_BUTTON:
-                        if (js.number < button_values_.size())
-                            button_values_[js.number] = js.value;
-                        break;
+            // --- 2. 尝试读取 UDP 远程数据 (非阻塞) ---
+            if (sockfd >= 0) {
+                JoyDataPacket packet;
+                struct sockaddr_in cliaddr;
+                socklen_t len = sizeof(cliaddr);
+                // 循环读取清空缓冲区，确保只使用最新的一帧
+                while (recvfrom(sockfd, &packet, sizeof(packet), 0, (struct sockaddr *)&cliaddr, &len) == sizeof(JoyDataPacket)) {
+                    received_data = true;
+                    for(int i = 0; i < 8; i++) axis_values_[i] = packet.axes[i];
+                    for(int i = 0; i < 16; i++) button_values_[i] = packet.buttons[i];
                 }
             }
 
-            // 检查设备是否断开 (read 返回 -1 且 errno != EAGAIN)
-            if (errno != EAGAIN && errno != EWOULDBLOCK) {
-                // 设备可能断开了
-                close(fd);
-                fd = -1;
-                std::cout << "[JoyInterface] Joystick disconnected. Reconnecting...\n";
-                continue;
+            // --- 3. 安全断联保护机制 ---
+            if (received_data) {
+                last_recv_time = GetCurrentTimeStamp();
+            } else if (GetCurrentTimeStamp() - last_recv_time > 500.0) {
+                // 如果超过 500ms 无论本地还是远程都没有数据更新，自动松开所有按键和摇杆
+                std::fill(axis_values_.begin(), axis_values_.end(), 0);
+                std::fill(button_values_.begin(), button_values_.end(), 0);
             }
 
-            // 3. 核心逻辑：将缓存的状态映射到 Robot UserCommand
-            usr_cmd_->time_stamp = GetCurrentTimeStamp(); // 持续更新心跳
+            // --- 4. 核心逻辑：将缓存的状态映射到 Robot UserCommand ---
+            usr_cmd_->time_stamp = GetCurrentTimeStamp();
 
-            // --- 模式切换逻辑 ---
             if (button_values_[RAW_BTN_B]) {
                  usr_cmd_->target_mode = uint8_t(RobotMotionState::JointDamping);
             }
@@ -134,31 +168,23 @@ private:
                     usr_cmd_->target_mode = uint8_t(RobotMotionState::RLControlMode);
                 }
             }
-            // ================== [新增：Y 键触发感知模式] ==================
             else if (button_values_[RAW_BTN_Y]) {
                 if (msfb_->GetCurrentState() == RobotMotionState::StandingUp) {
                     usr_cmd_->target_mode = uint8_t(RobotMotionState::RLSensorControlMode);
                 }
             }
-            // ==============================================================
 
-            // --- 速度控制逻辑 ---
-            // ================== [修改：同时支持两种RL控制模式] ==================
             if (msfb_->GetCurrentState() == RobotMotionState::RLControlMode ||
                 msfb_->GetCurrentState() == RobotMotionState::RLSensorControlMode) {
 
-                // 读取左摇杆
                 float stick_fwd  = -normalize_axis(axis_values_[RAW_AXIS_LY]);
                 float stick_side = -normalize_axis(axis_values_[RAW_AXIS_LX]);
-
-                // 读取十字键 (D-Pad)
                 float dpad_fwd   = -normalize_axis(axis_values_[RAW_AXIS_DPAD_Y]);
                 float dpad_side  = -normalize_axis(axis_values_[RAW_AXIS_DPAD_X]);
 
                 float fwd = 0.0f;
                 float side = 0.0f;
 
-                // 逻辑：如果十字键有输入，优先使用十字键；否则使用左摇杆
                 if (std::abs(dpad_fwd) > 0.1f || std::abs(dpad_side) > 0.1f) {
                     fwd  = dpad_fwd;
                     side = dpad_side;
@@ -167,7 +193,6 @@ private:
                     side = stick_side;
                 }
 
-                // 右摇杆控制转向 (Yaw)
                 float yaw = -normalize_axis(axis_values_[RAW_AXIS_RX]);
 
                 usr_cmd_->forward_vel_scale  = fwd * max_forward_;
@@ -182,13 +207,13 @@ private:
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
         }
 
-        if (fd >= 0) close(fd);
+        if(sockfd >= 0) close(sockfd);
+        if(fd_js >= 0) close(fd_js);
     }
 
 public:
     JoyInterface(RobotName robot_name) : UserCommandInterface(robot_name)
     {
-        std::cout << "[JoyInterface] Initialized (Direct /dev/input/js0 mode).\n";
     }
 
     ~JoyInterface() { Stop(); }
