@@ -82,7 +82,8 @@ private:
                     std::cout << "\n[JoyInterface] >>> SUCCESS: Joystick Connected directly! <<<\n";
                     std::cout << "  > Press 'B' for Damping\n";
                     std::cout << "  > Press 'A' for Stand Up\n";
-                    std::cout << "  > Press 'X' for RL Control\n";
+                    std::cout << "  > Press 'X' for RL Control (Blind)\n";
+                    std::cout << "  > Press 'Y' for RL Sensor Control (Perception)\n";
                     std::cout << "  > Use Left Stick or D-Pad to move\n";
                 } else {
                     // 如果打开失败，每秒重试一次
@@ -133,14 +134,23 @@ private:
                     usr_cmd_->target_mode = uint8_t(RobotMotionState::RLControlMode);
                 }
             }
+            // ================== [新增：Y 键触发感知模式] ==================
+            else if (button_values_[RAW_BTN_Y]) {
+                if (msfb_->GetCurrentState() == RobotMotionState::StandingUp) {
+                    usr_cmd_->target_mode = uint8_t(RobotMotionState::RLSensorControlMode);
+                }
+            }
+            // ==============================================================
 
             // --- 速度控制逻辑 ---
-            if (msfb_->GetCurrentState() == RobotMotionState::RLControlMode) {
-                
+            // ================== [修改：同时支持两种RL控制模式] ==================
+            if (msfb_->GetCurrentState() == RobotMotionState::RLControlMode ||
+                msfb_->GetCurrentState() == RobotMotionState::RLSensorControlMode) {
+
                 // 读取左摇杆
                 float stick_fwd  = -normalize_axis(axis_values_[RAW_AXIS_LY]);
                 float stick_side = -normalize_axis(axis_values_[RAW_AXIS_LX]);
-                
+
                 // 读取十字键 (D-Pad)
                 float dpad_fwd   = -normalize_axis(axis_values_[RAW_AXIS_DPAD_Y]);
                 float dpad_side  = -normalize_axis(axis_values_[RAW_AXIS_DPAD_X]);

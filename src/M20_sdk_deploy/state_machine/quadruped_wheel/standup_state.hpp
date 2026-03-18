@@ -173,6 +173,10 @@ public:
             if(uc_ptr_->GetUserCommand()->target_mode == uint8_t(RobotMotionState::RLControlMode)){
                 return StateName::kRLControl;
             }
+            // ================== [新增：切换到感知控制模式] ==================
+            if (uc_ptr_->GetUserCommand()->target_mode == uint8_t(RobotMotionState::RLSensorControlMode)) {
+                return StateName::kRLSensorControl;
+            }
         }
         return StateName::kStandUp;
     }

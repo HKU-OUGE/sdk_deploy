@@ -16,6 +16,7 @@ namespace types{
         StandingUp      = 1,
         JointDamping    = 2,
         RLControlMode   = 6,
+        RLSensorControlMode = 7, // <--- 新增：带感知的运动模式
     };
 
     enum StateName{
@@ -24,13 +25,13 @@ namespace types{
         kStandUp      = 1,
         kJointDamping = 2,
         kRLControl    = 6,
+        kRLSensorControl = 7,    // <--- 新增：带感知的状态名称
     };
 
     enum RemoteCommandType{
         kKeyBoard = 0,
-        kJoy = 1, // <--- 添加这一行
+        kJoy = 1,
     };
-    
 
     inline std::string GetAbsPath(){
         char buffer[PATH_MAX];
