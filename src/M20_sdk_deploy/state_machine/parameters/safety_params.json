@@ -1,0 +1,6 @@
+{
+    "leg_torque_limit": [76.4, 76.4, 76.4],
+    "leg_vel_limit": [22.4, 22.4, 22.4],
+    "wheel_torque_limit": 40.6,
+    "wheel_vel_limit": 79.3
+}

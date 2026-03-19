@@ -4,10 +4,8 @@
  * @author DeepRobotics
  * @version 1.0
  * @date 2025-11-07
- * 
- * @copyright Copyright (c) 2025  DeepRobotics
- * 
- */
+ * * @copyright Copyright (c) 2025  DeepRobotics
+ * */
 #pragma once
 #include "state_base.h"
 #include "policy_runner_base.hpp"
@@ -16,6 +14,10 @@
 #include "user_command_interface.h"
 #include "json.hpp"
 #include "basic_function.hpp"
+#include <algorithm>    // For std::clamp
+#include <fstream>      // For std::ifstream
+#include <filesystem>   // For std::filesystem
+#include <cmath>        // For std::abs
 
 namespace qw {
     class RLControlState : public StateBase {
@@ -34,6 +36,45 @@ namespace qw {
         Eigen::MatrixXf acc_rot = Eigen::MatrixXf::Zero(20, 3);
         int acc_rot_count = 0;
 
+        // --- 安全保护参数配置 ---
+        Eigen::Vector3f leg_vel_limit_ = Eigen::Vector3f(22.4, 22.4, 22.4);
+        Eigen::Vector3f leg_torque_limit_ = Eigen::Vector3f(76.4, 76.4, 76.4);
+        float wheel_vel_limit_ = 79.3;
+        float wheel_torque_limit_ = 21.6;
+
+        // 新增：电机持续异常计数器（防抖用）
+        int motor_unsafe_cnt_ = 0;
+
+        void LoadSafetyConfig() {
+            namespace fs = std::filesystem;
+            fs::path base = fs::path(__FILE__).parent_path();
+            fs::path config_path = base / ".." / "parameters" / "safety_params.json";
+            std::ifstream f(config_path.string());
+            if (f.is_open()) {
+                try {
+                    nlohmann::json j;
+                    f >> j;
+                    if (j.contains("leg_vel_limit")) {
+                        leg_vel_limit_ << j["leg_vel_limit"][0], j["leg_vel_limit"][1], j["leg_vel_limit"][2];
+                    }
+                    if (j.contains("leg_torque_limit")) {
+                        leg_torque_limit_ << j["leg_torque_limit"][0], j["leg_torque_limit"][1], j["leg_torque_limit"][2];
+                    }
+                    if (j.contains("wheel_vel_limit")) {
+                        wheel_vel_limit_ = j["wheel_vel_limit"];
+                    }
+                    if (j.contains("wheel_torque_limit")) {
+                        wheel_torque_limit_ = j["wheel_torque_limit"];
+                    }
+                    std::cout << "[Safety] 成功加载安全限制参数: " << config_path.string() << std::endl;
+                } catch (const std::exception& e) {
+                    std::cerr << "[Safety] 解析 JSON 出错: " << e.what() << "，将使用默认保护参数。" << std::endl;
+                }
+            } else {
+                std::cout << "[Safety] 未找到配置文件: " << config_path.string() << "，将使用默认保护参数。" << std::endl;
+            }
+        }
+
         void init_rbs_() {
             rbs_.flt_base_acc_mat = Eigen::MatrixXf::Zero(20, 3);
         }
@@ -47,7 +88,6 @@ namespace qw {
             rbs_.joint_vel = ri_ptr_->GetJointVelocity();
             rbs_.joint_tau = ri_ptr_->GetJointTorque();
 
-            // 储存
             rbs_.flt_base_acc_mat.row(acc_rot_count) = rbs_.base_acc.transpose();
             acc_rot_count += 1;
             acc_rot_count = acc_rot_count % 20;
@@ -63,6 +103,22 @@ namespace qw {
                     auto ra = policy_ptr_->getRobotAction(rbs_, *(uc_ptr_->GetUserCommand()));
                     
                     MatXf res = ra.ConvertToMat();
+
+                    // --- 指令硬限幅：确保下发给电机的目标值永远不越界 ---
+                    if (res.cols() >= 5) {
+                        for (int i = 0; i < res.rows(); ++i) {
+                            float v_lim, t_lim;
+                            if (i < 12) { 
+                                v_lim = leg_vel_limit_[i % 3];
+                                t_lim = leg_torque_limit_[i % 3];
+                            } else { 
+                                v_lim = wheel_vel_limit_;
+                                t_lim = wheel_torque_limit_;
+                            }
+                            res(i, 1) = std::clamp(res(i, 1), -v_lim, v_lim);
+                            res(i, 4) = std::clamp(res(i, 4), -t_lim, t_lim);
+                        }
+                    }
 
                     ri_ptr_->SetJointCommand(res);
                     run_cnt_record = state_run_cnt_;
@@ -93,12 +149,14 @@ namespace qw {
             }
             policy_ptr_->DisplayPolicyInfo();
             init_rbs_();
+            LoadSafetyConfig();
         }
 
         ~RLControlState() {}
 
         virtual void OnEnter() {
             state_run_cnt_ = -1;
+            motor_unsafe_cnt_ = 0; // 状态进入时重置计数器
             start_flag_ = true;
             run_policy_thread_ = std::thread(std::bind(&RLControlState::PolicyRunner, this));
             policy_ptr_->OnEnter(rbs_);
@@ -118,15 +176,53 @@ namespace qw {
 
         virtual bool LoseControlJudge() {
             if (uc_ptr_->GetUserCommand()->target_mode == uint8_t(RobotMotionState::JointDamping)) return true;
+            if (MotorUnsafeCheck()) return true; 
             return PostureUnsafeCheck();
         }
 
+        // ================== 加入防抖的异常检查 ==================
+        bool MotorUnsafeCheck() {
+            int num_joints = rbs_.joint_vel.size();
+            bool is_unsafe_this_step = false;
+            int err_i = -1; float err_v = 0, err_t = 0;
+
+            for (int i = 0; i < num_joints; ++i) {
+                float v_lim, t_lim;
+                if (i < 12) {
+                    // 对真实反馈放宽至 1.5 倍阈值，容忍着地瞬间的冲量
+                    v_lim = leg_vel_limit_[i % 3] * 2.0f; 
+                    t_lim = leg_torque_limit_[i % 3] * 2.0f;
+                } else {
+                    v_lim = wheel_vel_limit_ * 1.5f;
+                    t_lim = wheel_torque_limit_ * 1.5f;
+                }
+
+                if (std::abs(rbs_.joint_vel(i)) > v_lim || std::abs(rbs_.joint_tau(i)) > t_lim) {
+                    is_unsafe_this_step = true;
+                    err_i = i;
+                    err_v = rbs_.joint_vel(i);
+                    err_t = rbs_.joint_tau(i);
+                    break; 
+                }
+            }
+
+            if (is_unsafe_this_step) {
+                motor_unsafe_cnt_++;
+                // 核心防抖逻辑：连续超限 15 个循环(假如是 1000Hz 则是 15 毫秒)才认为是真失控
+                if (motor_unsafe_cnt_ > 30) {
+                    std::cout << "[Safety] 电机真实状态持续失控! 将切断控制。异常关节: " << err_i 
+                              << " 当前速度: " << err_v 
+                              << " 当前力矩: " << err_t << std::endl;
+                    return true;
+                }
+            } else {
+                // 冲击瞬间过去，数值恢复正常，计数器清零
+                motor_unsafe_cnt_ = 0; 
+            }
+            return false;
+        }
+
         bool PostureUnsafeCheck() {
-            // Vec3f rpy = ri_ptr_->GetImuRpy();
-            // if(rpy(0) > 30./180*M_PI || rpy(1) > 45./180*M_PI){
-            //     std::cout << "posture value: " << 180./M_PI*rpy.transpose() << std::endl;
-            //     return true;
-            // }
             return false;
         }
 
