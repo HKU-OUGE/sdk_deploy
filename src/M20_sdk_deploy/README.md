@@ -85,6 +85,7 @@ mkdir -p ~/colcon_ws/src
 cd ~/colcon_ws/src
 git clone https://github.com/ruihuang1124/elevation_mapping_cupy.git
 cd ~/colcon_ws
+rosdep install --from-paths src --ignore-src -r -y
 colcon build \
   --symlink-install \
   --packages-select elevation_map_msgs elevation_mapping_cupy \
