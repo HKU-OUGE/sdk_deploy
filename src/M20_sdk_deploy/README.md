@@ -72,6 +72,14 @@ graph LR
 Everyone is welcome to contribute to this repo. If you discover a bug or optimize our training config, just submit a pull request and we will look into it.
 ## Sim-to-sim
 
+Installing MuJoCo-LiDAR(https://github.com/TATP-233/MuJoCo-LiDAR.git) for simulation with lidar sensor:
+```bash
+git clone https://github.com/TATP-233/MuJoCo-LiDAR.git
+cd MuJoCo-LiDAR
+pip3 install --user -e .[taichi] --break-system-packages
+```
+
+
 ```bash
 pip install "numpy < 2.0" mujoco
 git clone https://github.com/DeepRoboticsLab/sdk_deploy.git

@@ -11,8 +11,7 @@
             </default>
             <default class="collision">
                 <geom material="collision_material" condim="3" contype="1" conaffinity="1" solref="0.005 1" friction="1 0.01 0.001" density="0" group="1" />
-                
-            </default>
+                </default>
         </default>
     </default>
 
@@ -40,7 +39,6 @@
         <mesh name="hr_knee" file="hr_knee.STL" />
         <mesh name="hr_wheel" file="hr_wheel.STL" />
         <texture name="texplane" type="2d" builtin="checker" rgb1=".2 .3 .4" rgb2=".1 0.15 0.2" width="512" height="512" />
-        
         <material name="MatPlane" reflectance="0.3" texture="texplane" texrepeat="1 1" texuniform="true" />
     <texture type="skybox" builtin="gradient" rgb1="0.3 0.5 0.7" rgb2="0 0 0" width="512" height="307" />
     <texture name="grid" type="2d" builtin="checker" width="512" height="512" rgb1=".1 .2 .3" rgb2=".2 .3 .4" />
@@ -51,9 +49,7 @@
   </asset>
 
     <worldbody>
-        
         <light directional="true" pos="-0.5 0.5 3" dir="0 0 -1" />
-        
         <geom name="floor" pos="0 0 0" size="100 100 .125" type="plane" material="MatPlane" condim="3" friction="1 0.01 0.01" group="0" />
 
         <body name="base_link" pos="0 0. 1." quat="1 0 0 0" childclass="robot">
@@ -62,6 +58,10 @@
 
             <site name="imu_site" pos="0.0632 -0.0268 0.0435" size="0.005" rgba="1 0 0 1" />
             <site name="base_site" pos="0 0 0" quat="1 0 0 0" />
+
+            <site name="lidar_site_front" pos="0.32028 0 -0.013" quat="0 0 0 1" rgba="1 0 0 1" size="0.01" />
+            
+            <site name="lidar_site_rear" pos="-0.32028 0 -0.013" quat="1 0 0 0" rgba="0 1 0 1" size="0.01" />
 
             <geom type="mesh" mesh="base_link" class="visual" />
             <geom size="0.375 0.045 0.07" type="box" class="collision" />
@@ -239,11 +239,7 @@
     </contact>
 
     <sensor>
-        
         <framequat name="base_quat" objtype="site" objname="base_site" />
-        
-        
-        
         <accelerometer site="imu_site" />
         <gyro site="imu_site" />
 

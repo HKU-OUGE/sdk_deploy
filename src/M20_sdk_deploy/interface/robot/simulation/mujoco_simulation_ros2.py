@@ -1,25 +1,17 @@
 """
- * @file mujoco_simulation.py
- * @brief simulation in mujoco with Auto-Terrain Loading and Joystick/Keyboard Control
- * @author Bo (Percy) Peng / Modified for Terrain & Control
- * @version 2.2 (Added CLI Args & Full Joystick Mapping)
- * @date 2025-02-17
- *
+ * @file mujoco_simulation_ros2.py
+ * @brief simulation in mujoco with Real Mid360 LiDAR Simulation (Aligned with Isaac Sim Pose)
+ * @author Bo (Percy) Peng / Modified for Sim2Sim True PointCloud
+ * @version 2.6
  * @copyright Copyright (c) 2025 DeepRobotics
 """
 
 import sys
-# print("[Debug] Script starting...", file=sys.stderr, flush=True)
-
 import os
 import time
-import socket
-import struct
-import threading
 import traceback
-import argparse # [新增] 用于解析命令行参数
+import argparse
 from pathlib import Path
-from scipy.spatial.transform import Rotation
 import numpy as np
 import mujoco
 import mujoco.viewer
@@ -31,27 +23,24 @@ try:
     from rclpy.qos import qos_profile_sensor_data
     from builtin_interfaces.msg import Time
     from drdds.msg import ImuData, JointsData, JointsDataCmd, MetaType, ImuDataValue, JointsDataValue, JointData, JointDataCmd, GamepadData
-    # print("[Debug] Imports successful.", file=sys.stderr, flush=True)
+    
+    # 引入 ROS 2 点云数据类型和 MuJoCo-LiDAR
+    from sensor_msgs.msg import PointCloud2, PointField
+    from mujoco_lidar import MjLidarWrapper, scan_gen
 except ImportError as e:
     print(f"[Critical Error] Import failed: {e}", file=sys.stderr, flush=True)
     sys.exit(1)
 
-# ... [Keep Definitions] ...
 MODEL_NAME = "M20"
 CURRENT_DIR = Path(__file__).resolve().parent
-
-# Define the paths
-ROBOT_XML_PATH = CURRENT_DIR / ".." / ".." / ".." / "model" / "M20" / "mjcf" / "M20.xml"
-TERRAIN_XML_PATH = CURRENT_DIR / "m20_terrain.xml"
-
-ROBOT_XML_PATH = str(ROBOT_XML_PATH.resolve())
-TERRAIN_XML_PATH = str(TERRAIN_XML_PATH.resolve())
+ROBOT_XML_PATH = str((CURRENT_DIR / ".." / ".." / ".." / "model" / "M20" / "mjcf" / "M20.xml").resolve())
+TERRAIN_XML_PATH = str((CURRENT_DIR / "m20_terrain.xml").resolve())
 
 USE_VIEWER = True
 DT = 0.001
 RENDER_INTERVAL = 50
 
-# Calibaration parameters (from V1.0)
+# Calibaration parameters
 JOINT_DIR = np.array([1, 1, -1, 1, 1, -1, 1, -1, -1, 1, -1, 1, -1, -1, 1, -1], dtype=np.float32)
 POS_OFFSET_DEG = np.array([-25, 229, 160, 0, 25, -131, -200, 0, -25, -229, -160, 0, 25, 131, 200, 0], dtype=np.float32)
 POS_OFFSET_RAD = POS_OFFSET_DEG / 180.0 * np.pi
@@ -64,65 +53,37 @@ JOINT_INIT = {
 }
 
 def merge_xmls(robot_path, terrain_path):
-    """
-    Helper function to merge Terrain XML assets and geoms into Robot XML in-memory.
-    """
-    print(f"[Sim] Loading Robot: {robot_path}")
     if not os.path.exists(terrain_path):
-        print(f"[Sim] Warning: Terrain file not found at {terrain_path}. Loading robot only.")
-        with open(robot_path, 'r') as f:
-            return f.read()
-
-    print(f"[Sim] Merging Terrain: {terrain_path}")
-    
+        with open(robot_path, 'r') as f: return f.read()
     try:
-        # 1. Parse both XMLs
         robot_tree = ET.parse(robot_path)
-        robot_root = robot_tree.getroot()
-        
         terrain_tree = ET.parse(terrain_path)
+        robot_root = robot_tree.getroot()
         terrain_root = terrain_tree.getroot()
-        
-        # 2. Find key sections
         robot_worldbody = robot_root.find("worldbody")
         terrain_worldbody = terrain_root.find("worldbody")
-        
         robot_asset = robot_root.find("asset")
         terrain_asset = terrain_root.find("asset")
         
-        # 3. Merge Assets (Materials/Textures)
         if terrain_asset is not None:
-            if robot_asset is None:
-                robot_asset = ET.SubElement(robot_root, "asset")
-            for item in terrain_asset:
-                robot_asset.append(item)
+            if robot_asset is None: robot_asset = ET.SubElement(robot_root, "asset")
+            for item in terrain_asset: robot_asset.append(item)
                 
-        # 4. Merge Worldbody Geoms (The actual terrain)
         if terrain_worldbody is not None and robot_worldbody is not None:
             for item in terrain_worldbody:
-                # 过滤掉 light/floor 避免冲突
-                if item.tag == "light" and robot_worldbody.find("light") is not None:
-                    continue
-                if item.get("name") == "floor" and robot_worldbody.find(".//geom[@name='floor']") is not None:
-                    continue
+                if item.tag == "light" and robot_worldbody.find("light") is not None: continue
+                if item.get("name") == "floor" and robot_worldbody.find(".//geom[@name='floor']") is not None: continue
                 robot_worldbody.append(item)
-
         return ET.tostring(robot_root, encoding='unicode')
-
     except Exception as e:
-        print(f"[Sim] Error merging XMLs: {e}")
-        with open(robot_path, 'r') as f:
-            return f.read()
+        with open(robot_path, 'r') as f: return f.read()
 
 class JoystickInterface:
     def __init__(self, node):
         self.node = node
         self.active = False
-        # Use SensorData QoS (Best Effort) for Joystick to ensure reception by C++ nodes
         self.pub = node.create_publisher(GamepadData, '/GAMEPAD_DATA', qos_profile_sensor_data)
         self.js = None
-        self.last_print_time = 0
-        
         try:
             import pygame
             self.pygame = pygame
@@ -133,91 +94,32 @@ class JoystickInterface:
                 self.js.init()
                 self.active = True
                 self.node.get_logger().info(f"[Joystick] Connected: {self.js.get_name()}")
-                self.node.get_logger().info("[Joystick] Controls Mapped: Left Stick (Move), Right Stick (Turn), A(Damping), B(Stand), X(Control)")
-            else:
-                self.node.get_logger().warn("[Joystick] No joystick found.")
-        except ImportError:
-            self.node.get_logger().warn("[Joystick] 'pygame' not installed.")
-        except Exception as e:
-            self.node.get_logger().error(f"[Joystick] Init error: {e}")
+        except Exception as e: self.node.get_logger().error(f"[Joystick] Init error: {e}")
 
     def update(self):
         if not self.active or self.js is None: return
         try:
             self.pygame.event.pump()
             msg = GamepadData()
-            msg.header = MetaType()
-            msg.header.stamp = self.node.get_clock().now().to_msg()
-            msg.header.frame_id = 0
-            
-            # Default values
-            msg.left_axis_x = 0.0; msg.left_axis_y = 0.0
-            msg.right_axis_x = 0.0; msg.right_axis_y = 0.0
-            msg.buttons = 0
-
+            msg.header = MetaType(); msg.header.stamp = self.node.get_clock().now().to_msg(); msg.header.frame_id = 0
+            msg.left_axis_x = 0.0; msg.left_axis_y = 0.0; msg.right_axis_x = 0.0; msg.right_axis_y = 0.0; msg.buttons = 0
             num_axes = self.js.get_numaxes()
-            
-            # 轴映射逻辑 (Xbox Standard)
-            # Axis 0: Left Stick X (Left/Right) -> Side velocity (A/D)
-            # Axis 1: Left Stick Y (Up/Down)    -> Forward velocity (W/S)
-            # Axis 3: Right Stick X (Left/Right)-> Turning velocity (Q/E)
-            
-            # Pygame: Left = -1, Right = 1; Up = -1, Down = 1
-            # Robot: Forward = +Vel_x, Left = +Vel_y, Turn Left = +Omega_z
-            
-            if num_axes > 0: msg.left_axis_x = -float(self.js.get_axis(0)) # Robot Left (+y) is Stick Left (-x) -> Invert
-            if num_axes > 1: msg.left_axis_y = -float(self.js.get_axis(1)) # Robot Forward (+x) is Stick Up (-y) -> Invert
-            
+            if num_axes > 0: msg.left_axis_x = -float(self.js.get_axis(0))
+            if num_axes > 1: msg.left_axis_y = -float(self.js.get_axis(1))
             if num_axes >= 4:
-                # Right Stick X for turning
                 turn_axis_idx = 3 if num_axes >= 5 else 2 
-                msg.right_axis_x = -float(self.js.get_axis(turn_axis_idx)) # Turn Left (+w) is Stick Left (-x) -> Invert
-                
-                # Right Stick Y (Optional, maybe pitch?)
-                # msg.right_axis_y = ...
-
-            # 按钮映射逻辑 (Mapping Keyboard Logic)
-            # Mode: R (Damping) -> Button A (0)
-            #       Z (Stand)   -> Button B (1)
-            #       C (Control) -> Button X (2)
-            
+                msg.right_axis_x = -float(self.js.get_axis(turn_axis_idx)) 
             buttons_mask = 0
-            num_buttons = self.js.get_numbuttons()
-            
-            # Xbox Button Map: A=0, B=1, X=2, Y=3, LB=4, RB=5...
-            if num_buttons > 0 and self.js.get_button(0): buttons_mask |= (1 << 0) # A -> Damping (Mode 0?)
-            if num_buttons > 1 and self.js.get_button(1): buttons_mask |= (1 << 1) # B -> Stand (Mode 1?)
-            if num_buttons > 2 and self.js.get_button(2): buttons_mask |= (1 << 2) # X -> Control (Mode 2?)
-            
-            # Keep original raw button mapping too if needed, but for now we just fill the mask
-            # If your C++ node expects specific bits for modes, ensure these match!
-            # Assuming C++ maps: 
-            #   Bit 0 -> Damping? 
-            #   Bit 1 -> Stand?
-            #   Bit 2 -> Control?
-            # Or does C++ read axes directly for velocity? Yes usually.
-            
-            # Fill the rest of the buttons just in case
-            for i in range(min(16, num_buttons)):
+            for i in range(min(16, self.js.get_numbuttons())):
                 if self.js.get_button(i): buttons_mask |= (1 << i)
-            
             msg.buttons = buttons_mask
-            
             self.pub.publish(msg)
-            
-            # [Debug] Print inputs if significant
-            if (abs(msg.left_axis_y) > 0.1 or abs(msg.left_axis_x) > 0.1 or abs(msg.right_axis_x) > 0.1) and (time.time() - self.last_print_time > 1.0):
-                # print(f"[Joystick] Publishing: Fwd={msg.left_axis_y:.2f}, Side={msg.left_axis_x:.2f}, Turn={msg.right_axis_x:.2f}, Btn={msg.buttons}", file=sys.stderr)
-                self.last_print_time = time.time()
-                
         except Exception as e:
-            self.node.get_logger().error(f"[Joystick] Runtime error: {e}")
-            self.active = False
+            self.node.get_logger().error(f"[Joystick] Runtime error: {e}"); self.active = False
 
 class MuJoCoSimulationNode(Node):
     def __init__(self, model_key: str = MODEL_NAME, use_joystick: bool = False):
         super().__init__('mujoco_simulation')
-        # print("[Debug] Node initializing...", file=sys.stderr, flush=True)
         xml_string = merge_xmls(ROBOT_XML_PATH, TERRAIN_XML_PATH)
         robot_dir = Path(ROBOT_XML_PATH).parent
         merged_xml_path = robot_dir / "merged_scene_autogen.xml"
@@ -225,68 +127,62 @@ class MuJoCoSimulationNode(Node):
             with open(merged_xml_path, 'w') as f: f.write(xml_string)
             self.model = mujoco.MjModel.from_xml_path(str(merged_xml_path))
         except Exception as e:
-            self.get_logger().error(f"Failed to load merged XML: {e}")
             self.model = mujoco.MjModel.from_xml_string(xml_string)
         self.model.opt.timestep = DT
         self.data = mujoco.MjData(self.model)
         self.actuator_ids = [a for a in range(self.model.nu)]
         self.dof_num = len(self.actuator_ids)
         self._set_initial_pose(model_key)
-        self.kp_cmd = np.zeros((self.dof_num, 1), np.float32)
-        self.kd_cmd = np.zeros_like(self.kp_cmd)
-        self.pos_cmd = np.zeros_like(self.kp_cmd)
-        self.vel_cmd = np.zeros_like(self.kp_cmd)
-        self.tau_ff = np.zeros_like(self.kp_cmd)
-        self.input_tq = np.zeros_like(self.kp_cmd)
+        self.kp_cmd = np.zeros((self.dof_num, 1), np.float32); self.kd_cmd = np.zeros_like(self.kp_cmd)
+        self.pos_cmd = np.zeros_like(self.kp_cmd); self.vel_cmd = np.zeros_like(self.kp_cmd)
+        self.tau_ff = np.zeros_like(self.kp_cmd); self.input_tq = np.zeros_like(self.kp_cmd)
         self.timestamp = 0.0
-        self.get_logger().info(f"[INFO] MuJoCo model loaded, dof = {self.dof_num}")
         
         self.imu_pub = self.create_publisher(ImuData, '/IMU_DATA', 200)
         self.joints_pub = self.create_publisher(JointsData, '/JOINTS_DATA', 200)
         self.cmd_sub = self.create_subscription(JointsDataCmd, '/JOINTS_CMD', self._cmd_callback, 50)
         
-        # Joystick
-        self.use_joystick = use_joystick
-        if self.use_joystick:
-            self.joystick = JoystickInterface(self)
-        else:
-            self.joystick = None
-            self.get_logger().info("[Sim] Joystick disabled by default (use --joystick to enable)")
+        # ================= 真实 Mid360 LiDAR 初始化 =================
+        self.lidar_pub = self.create_publisher(PointCloud2, '/LIDAR_POINT_CLOUD_MERGED', qos_profile_sensor_data)
+        self.world_lidar_pts = np.empty((0, 3)) 
+        self.vis_geoms_initialized = False 
+        try:
+            # 采用 geomgroup 过滤：射线只与 group 0 (地形) 碰撞，避免扫到自身的大腿
+            lidar_args = {"geomgroup": [1, 0, 0, 0, 0, 0]}
+            
+            # 单例模式初始化，使用 Taichi 渲染
+            self.lidar = MjLidarWrapper(
+                self.model, site_name="lidar_site_front", backend="taichi", args=lidar_args
+            )
+            self.livox_generator = scan_gen.LivoxGenerator("mid360") 
+            self.get_logger().info("[Sim] Physical Mid360 LiDAR engine initialized successfully.")
+        except Exception as e:
+            self.get_logger().error(f"[Sim] Failed to init LiDAR: {e}")
+            self.lidar = None
+        # =======================================================
         
-        self.viewer = None
-        if USE_VIEWER:
-            self.viewer = mujoco.viewer.launch_passive(self.model, self.data)
-        # print("[Debug] Node init complete.", file=sys.stderr, flush=True)
+        self.use_joystick = use_joystick
+        if self.use_joystick: self.joystick = JoystickInterface(self)
+        self.viewer = mujoco.viewer.launch_passive(self.model, self.data) if USE_VIEWER else None
 
     def _set_initial_pose(self, key: str):
         if key in JOINT_INIT:
-            qpos0 = self.data.qpos.copy()
-            qpos0[7:7 + self.dof_num] = JOINT_INIT[key]
-            qpos0[:3] = np.array([0, 0, 0.45])
-            qpos0[3:7] = np.array([1, 0, 0, 0])
-            self.data.qpos[:] = qpos0
-            mujoco.mj_forward(self.model, self.data)
+            qpos0 = self.data.qpos.copy(); qpos0[7:7 + self.dof_num] = JOINT_INIT[key]
+            qpos0[:3] = np.array([0, 0, 0.45]); qpos0[3:7] = np.array([1, 0, 0, 0])
+            self.data.qpos[:] = qpos0; mujoco.mj_forward(self.model, self.data)
 
     def _cmd_callback(self, msg: JointsDataCmd):
         if hasattr(msg.data, 'joints_data'): data_list = msg.data.joints_data
         elif hasattr(msg.data, 'joints_cmd'): data_list = msg.data.joints_cmd
         else: return
-        if len(data_list) != self.dof_num: return
-        pub_pos = np.zeros(self.dof_num, dtype=np.float32)
-        pub_vel = np.zeros(self.dof_num, dtype=np.float32)
+        pub_pos = np.zeros(self.dof_num, dtype=np.float32); pub_vel = np.zeros(self.dof_num, dtype=np.float32)
         for i in range(self.dof_num):
-            joint_cmd = data_list[i]
-            self.kp_cmd[i] = joint_cmd.kp
-            self.kd_cmd[i] = joint_cmd.kd
-            pub_pos[i] = joint_cmd.position
-            pub_vel[i] = joint_cmd.velocity
-            self.tau_ff[i] = joint_cmd.torque 
-        self.pos_cmd.flat = pub_pos * JOINT_DIR + POS_OFFSET_RAD
-        self.vel_cmd.flat = pub_vel * JOINT_DIR
+            joint_cmd = data_list[i]; self.kp_cmd[i] = joint_cmd.kp; self.kd_cmd[i] = joint_cmd.kd
+            pub_pos[i] = joint_cmd.position; pub_vel[i] = joint_cmd.velocity; self.tau_ff[i] = joint_cmd.torque 
+        self.pos_cmd.flat = pub_pos * JOINT_DIR + POS_OFFSET_RAD; self.vel_cmd.flat = pub_vel * JOINT_DIR
 
     def _apply_joint_torque(self):
-        q = self.data.qpos[7:7 + self.dof_num].reshape(-1, 1)
-        dq = self.data.qvel[6:6 + self.dof_num].reshape(-1, 1)
+        q = self.data.qpos[7:7 + self.dof_num].reshape(-1, 1); dq = self.data.qvel[6:6 + self.dof_num].reshape(-1, 1)
         self.input_tq = (self.kp_cmd * (self.pos_cmd - q) + self.kd_cmd * (self.vel_cmd - dq) + self.tau_ff)
         self.data.ctrl[:] = self.input_tq.flatten()
 
@@ -299,12 +195,12 @@ class MuJoCoSimulationNode(Node):
 
     def _publish_robot_state(self, step: int):
         q_world = self.data.sensordata[:4]; rpy_rad = self.quaternion_to_euler(q_world)
-        rpy_deg = [angle * (180.0 / np.pi) for angle in rpy_rad]
         body_acc = self.data.sensordata[4:7]; angvel_b = self.data.sensordata[7:10]
         imu_msg = ImuData(); imu_msg.header = MetaType(); imu_msg.header.frame_id = 0
         stamp = Time(); sec = int(self.timestamp); nanosec = int((self.timestamp - sec) * 1e9)
         stamp.sec = sec; stamp.nanosec = nanosec; imu_msg.header.stamp = stamp
-        imu_msg.data = ImuDataValue(); imu_msg.data.roll = float(rpy_deg[0]); imu_msg.data.pitch = float(rpy_deg[1]); imu_msg.data.yaw = float(rpy_deg[2])
+        imu_msg.data = ImuDataValue()
+        imu_msg.data.roll = float(rpy_rad[0]*180/np.pi); imu_msg.data.pitch = float(rpy_rad[1]*180/np.pi); imu_msg.data.yaw = float(rpy_rad[2]*180/np.pi)
         imu_msg.data.omega_x = float(angvel_b[0]); imu_msg.data.omega_y = float(angvel_b[1]); imu_msg.data.omega_z = float(angvel_b[2])
         imu_msg.data.acc_x = float(body_acc[0]); imu_msg.data.acc_y = float(body_acc[1]); imu_msg.data.acc_z = float(body_acc[2])
         self.imu_pub.publish(imu_msg)
@@ -318,6 +214,62 @@ class MuJoCoSimulationNode(Node):
             joint.motion_temp = 40.0; joint.driver_temp = 40.0
         self.joints_pub.publish(joints_msg)
 
+    # ================= LiDAR 物理扫描与点云发布 =================
+    def _publish_lidar_state(self, step: int):
+        if self.lidar is None: return
+            
+        rays_theta, rays_phi = self.livox_generator.sample_ray_angles()
+        
+        base_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "base_link")
+        base_pos = self.data.xpos[base_id]
+        base_mat = self.data.xmat[base_id].reshape(3, 3)
+        
+        world_pts_list = []
+        
+        # 扫描前置雷达
+        self.lidar.trace_rays(self.data, rays_theta, rays_phi, site_name="lidar_site_front")
+        local_pts_front = self.lidar.get_hit_points()
+        if len(local_pts_front) > 0:
+            world_pts_front = local_pts_front @ self.lidar.sensor_rotation.T + self.lidar.sensor_position
+            base_pts_front = (world_pts_front - base_pos) @ base_mat
+            world_pts_list.append(world_pts_front)
+        else: base_pts_front = np.empty((0, 3))
+            
+        # 扫描后置雷达
+        self.lidar.trace_rays(self.data, rays_theta, rays_phi, site_name="lidar_site_rear")
+        local_pts_rear = self.lidar.get_hit_points()
+        if len(local_pts_rear) > 0:
+            world_pts_rear = local_pts_rear @ self.lidar.sensor_rotation.T + self.lidar.sensor_position
+            base_pts_rear = (world_pts_rear - base_pos) @ base_mat
+            world_pts_list.append(world_pts_rear)
+        else: base_pts_rear = np.empty((0, 3))
+            
+        # 缓存世界坐标点云，供本地 GUI 渲染
+        if len(world_pts_list) > 0: self.world_lidar_pts = np.vstack(world_pts_list)
+        else: self.world_lidar_pts = np.empty((0, 3))
+            
+        merged_points = np.vstack((base_pts_front, base_pts_rear))
+        if len(merged_points) == 0: return
+
+        # 发布至 ROS 2 (供你的 C++ 算法订阅并切片处理)
+        msg = PointCloud2()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.header.frame_id = "base_link"
+        msg.height = 1
+        msg.width = len(merged_points)
+        msg.fields = [
+            PointField(name='x', offset=0, datatype=PointField.FLOAT32, count=1),
+            PointField(name='y', offset=4, datatype=PointField.FLOAT32, count=1),
+            PointField(name='z', offset=8, datatype=PointField.FLOAT32, count=1),
+        ]
+        msg.is_bigendian = False
+        msg.point_step = 12
+        msg.row_step = msg.point_step * msg.width
+        msg.is_dense = True
+        msg.data = merged_points.astype(np.float32).tobytes()
+        self.lidar_pub.publish(msg)
+    # =======================================================
+
     def start(self):
         step = 0; last_time = time.time()
         print("[Sim] Starting simulation loop...", file=sys.stderr, flush=True)
@@ -329,33 +281,48 @@ class MuJoCoSimulationNode(Node):
                 self.timestamp = step * DT
                 if step % 5 == 0: self._publish_robot_state(step)
                 
-                # [新增] 条件更新手柄
-                if self.use_joystick and step % 10 == 0: 
-                    self.joystick.update()
+                # 10Hz LiDAR 物理扫描
+                if step % int(0.1 / DT) == 0: self._publish_lidar_state(step)
+                
+                if self.use_joystick and step % 10 == 0: self.joystick.update()
                     
-                if self.viewer and step % RENDER_INTERVAL == 0: self.viewer.sync()
+                if self.viewer and step % RENDER_INTERVAL == 0: 
+                    # ================= 密集可视化渲染 =================
+                    if hasattr(self, 'world_lidar_pts') and len(self.world_lidar_pts) > 0:
+                        with self.viewer.lock(): 
+                            max_g = self.viewer.user_scn.maxgeom
+                            if not self.vis_geoms_initialized:
+                                for i in range(max_g):
+                                    mujoco.mjv_initGeom(
+                                        self.viewer.user_scn.geoms[i], type=mujoco.mjtGeom.mjGEOM_SPHERE,  
+                                        # 【修改 1】缩小球体半径到 0.01，让密集的点云看起来更精细
+                                        size=[0.01, 0, 0], pos=np.zeros(3), mat=np.eye(3).flatten(), rgba=np.array([0.0, 1.0, 0.0, 0.6]) 
+                                    )
+                                self.vis_geoms_initialized = True
+                            
+                            # 【修改 2】改为 [::1] 不降采样，或者 [::2] 保留一半。
+                            vis_pts = self.world_lidar_pts[::2] 
+                            
+                            # 注意：MuJoCo 的 user_scn 默认有一个最大几何体数量上限（通常是 1000 左右）
+                            # 这里会安全地截断，自动渲染到系统支持的极限点数
+                            num_pts = min(len(vis_pts), max_g)
+                            self.viewer.user_scn.ngeom = num_pts
+                            
+                            for i in range(num_pts): 
+                                self.viewer.user_scn.geoms[i].pos[:] = vis_pts[i]
+                    # ==============================================================
+                    self.viewer.sync()
             rclpy.spin_once(self, timeout_sec=0.0)
 
 if __name__ == "__main__":
     np.set_printoptions(precision=4, suppress=True)
-    
-    # [新增] 命令行参数解析
     parser = argparse.ArgumentParser(description="MuJoCo Simulation for M20")
     parser.add_argument("--joystick", action="store_true", help="Enable joystick/gamepad control")
-    parser.add_argument("--keyboard", action="store_true", help="Enable keyboard control (Default)")
-    
-    # 因为 rclpy 也会解析参数，所以我们需要过滤掉 ROS 相关的参数
-    # 或者先初始化 rclpy，再解析我们自己的参数
-    
-    # 策略：先用 argparse 解析已知参数，剩下的留给 rclpy
     args, unknown = parser.parse_known_args()
-    
-    # 默认是 keyboard，如果指定了 joystick 则覆盖
-    use_joystick = args.joystick
     
     try:
         rclpy.init(args=unknown)
-        sim_node = MuJoCoSimulationNode(use_joystick=use_joystick)
+        sim_node = MuJoCoSimulationNode(use_joystick=args.joystick)
         sim_node.start()
     except KeyboardInterrupt: print("[Sim] Stopping...", file=sys.stderr)
     except Exception: traceback.print_exc()
