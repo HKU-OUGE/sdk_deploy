@@ -46,7 +46,7 @@ private:
     std::vector<int> axis_values_;
     std::vector<int> button_values_;
 
-    // --- 手柄映射 (Logitech F710 XInput 模式) ---
+    // --- 手柄映射 (Logitech F710 / Xbox XInput 模式) ---
     const int RAW_AXIS_LX = 0;
     const int RAW_AXIS_LY = 1;
     const int RAW_AXIS_RX = 3;
@@ -88,7 +88,6 @@ private:
             servaddr.sin_addr.s_addr = INADDR_ANY;
             servaddr.sin_port = htons(9999);
 
-            // 将 UDP Socket 设置为非阻塞模式
             int flags = fcntl(sockfd, F_GETFL, 0);
             fcntl(sockfd, F_SETFL, flags | O_NONBLOCK);
             bind(sockfd, (const struct sockaddr *)&servaddr, sizeof(servaddr));
@@ -98,23 +97,25 @@ private:
         const char* device_path = "/dev/input/js0";
         int fd_js = -1;
 
-        double last_recv_time = GetCurrentTimeStamp();
+        double last_udp_recv_time = 0.0;
+        bool usb_connected = false;
 
         std::cout << "\n[JoyInterface] >>> SUCCESS: Dual-Mode Initialized! <<<\n";
         std::cout << "  > Mode 1: Auto-detect local USB Joystick at " << device_path << "\n";
         std::cout << "  > Mode 2: Listening for UDP remote data on port 9999\n";
 
         while (running_) {
-            bool received_data = false;
+            bool udp_received_this_frame = false;
 
-            // --- 1. 尝试读取本地 USB 手柄 (非阻塞) ---
+            // --- 1. 读取本地 USB 手柄 (非阻塞) ---
             if (fd_js < 0) {
                 fd_js = open(device_path, O_RDONLY | O_NONBLOCK);
             }
-            if (fd_js >= 0) {
+            usb_connected = (fd_js >= 0);
+
+            if (usb_connected) {
                 struct js_event js;
                 while (read(fd_js, &js, sizeof(js)) > 0) {
-                    received_data = true;
                     switch (js.type & ~JS_EVENT_INIT) {
                         case JS_EVENT_AXIS:
                             if (js.number < axis_values_.size()) axis_values_[js.number] = js.value;
@@ -124,35 +125,40 @@ private:
                             break;
                     }
                 }
-                // 检查设备是否被拔出
+
                 if (errno != EAGAIN && errno != EWOULDBLOCK) {
-                    close(fd_js); fd_js = -1;
+                    close(fd_js); 
+                    fd_js = -1;
+                    usb_connected = false;
+                    std::cout << "\n[JoyInterface] WARNING: USB Joystick disconnected.\n";
                 }
             }
 
-            // --- 2. 尝试读取 UDP 远程数据 (非阻塞) ---
+            // --- 2. 读取 UDP 远程数据 (非阻塞) ---
             if (sockfd >= 0) {
                 JoyDataPacket packet;
                 struct sockaddr_in cliaddr;
                 socklen_t len = sizeof(cliaddr);
-                // 循环读取清空缓冲区，确保只使用最新的一帧
                 while (recvfrom(sockfd, &packet, sizeof(packet), 0, (struct sockaddr *)&cliaddr, &len) == sizeof(JoyDataPacket)) {
-                    received_data = true;
+                    udp_received_this_frame = true;
                     for(int i = 0; i < 8; i++) axis_values_[i] = packet.axes[i];
                     for(int i = 0; i < 16; i++) button_values_[i] = packet.buttons[i];
                 }
             }
 
-            // --- 3. 安全断联保护机制 ---
-            if (received_data) {
-                last_recv_time = GetCurrentTimeStamp();
-            } else if (GetCurrentTimeStamp() - last_recv_time > 500.0) {
-                // 如果超过 500ms 无论本地还是远程都没有数据更新，自动松开所有按键和摇杆
+            // --- 3. 断联保护机制 ---
+            if (udp_received_this_frame) {
+                last_udp_recv_time = GetCurrentTimeStamp();
+            }
+            bool udp_connected = (GetCurrentTimeStamp() - last_udp_recv_time < 500.0);
+
+            // 只有当 USB 物理断开 且 UDP 也超时的情况下，才触发强制清零（急停）
+            if (!usb_connected && !udp_connected) {
                 std::fill(axis_values_.begin(), axis_values_.end(), 0);
                 std::fill(button_values_.begin(), button_values_.end(), 0);
             }
 
-            // --- 4. 核心逻辑：将缓存的状态映射到 Robot UserCommand ---
+            // --- 4. 核心逻辑：状态映射 ---
             usr_cmd_->time_stamp = GetCurrentTimeStamp();
 
             if (button_values_[RAW_BTN_B]) {
@@ -185,7 +191,7 @@ private:
                 float fwd = 0.0f;
                 float side = 0.0f;
 
-                if (std::abs(dpad_fwd) > 0.1f || std::abs(dpad_side) > 0.1f) {
+                if (std::abs(dpad_fwd) > 0.8f || std::abs(dpad_side) > 0.8f) {
                     fwd  = dpad_fwd;
                     side = dpad_side;
                 } else {
