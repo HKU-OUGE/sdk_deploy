@@ -16,6 +16,9 @@ import numpy as np
 import mujoco
 import mujoco.viewer
 import xml.etree.ElementTree as ET
+# [新增] 引入 TF 相关依赖
+from tf2_ros import TransformBroadcaster
+from geometry_msgs.msg import TransformStamped
 
 try:
     import rclpy
@@ -165,6 +168,9 @@ class MuJoCoSimulationNode(Node):
         if self.use_joystick: self.joystick = JoystickInterface(self)
         self.viewer = mujoco.viewer.launch_passive(self.model, self.data) if USE_VIEWER else None
 
+        # 初始化 TF 广播器
+        self.tf_broadcaster = TransformBroadcaster(self)
+
     def _set_initial_pose(self, key: str):
         if key in JOINT_INIT:
             qpos0 = self.data.qpos.copy(); qpos0[7:7 + self.dof_num] = JOINT_INIT[key]
@@ -213,6 +219,29 @@ class MuJoCoSimulationNode(Node):
             joint.position = float(pub_pos[i]); joint.torque = float(pub_tau[i]); joint.velocity = float(pub_vel[i])
             joint.motion_temp = 40.0; joint.driver_temp = 40.0
         self.joints_pub.publish(joints_msg)
+
+        # ================= [新增] 发布 odom -> base_link TF =================
+        t = TransformStamped()
+        t.header.stamp = stamp
+        t.header.frame_id = 'odom'
+        t.child_frame_id = 'base_link'
+        
+        # 提取真实位姿
+        base_pos = self.data.qpos[:3]
+        base_quat = self.data.qpos[3:7]  # MuJoCo 的四元数格式是 (w, x, y, z)
+        
+        t.transform.translation.x = float(base_pos[0])
+        t.transform.translation.y = float(base_pos[1])
+        t.transform.translation.z = float(base_pos[2])
+        
+        # ROS 2 TF 的四元数格式要求是 (x, y, z, w)
+        t.transform.rotation.x = float(base_quat[1])
+        t.transform.rotation.y = float(base_quat[2])
+        t.transform.rotation.z = float(base_quat[3])
+        t.transform.rotation.w = float(base_quat[0])
+        
+        self.tf_broadcaster.sendTransform(t)
+        # =====================================================================
 
     # ================= LiDAR 物理扫描与点云发布 =================
     def _publish_lidar_state(self, step: int):

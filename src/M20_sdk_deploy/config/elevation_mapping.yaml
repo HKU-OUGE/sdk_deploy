@@ -1,0 +1,27 @@
+/elevation_mapping_node:
+  ros__parameters:
+    # 坐标系配置
+    map_frame: "odom"                # 全局参考系
+    base_frame: "base_link"          # 机器人中心参考系
+    corrected_map_frame: "odom"
+    
+    # 核心网格参数 (对齐 Isaac Sim 训练环境)
+    resolution: 0.05                 # 分辨率 5cm
+    map_length: 4.0                  # 建图边长 4.0m (前后各覆盖 2.0m，足够你 3x1 的需求)
+    
+    # 订阅你的雷达融合数据
+    subscribers:
+      front_lidar:
+        topic_name: '/LIDAR_POINT_CLOUD_MERGED'
+        data_type: pointcloud
+
+    # 发布的高程图话题
+    publishers:
+      elevation_map_raw:
+        layers: ['elevation', 'variance']
+        basic_layers: ['elevation']
+        fps: 10.0
+      elevation_map_filter:
+        layers: ['min_filter', 'smooth', 'inpaint', 'elevation']
+        basic_layers: ['min_filter']
+        fps: 10.0

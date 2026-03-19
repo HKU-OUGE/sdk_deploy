@@ -173,27 +173,26 @@
                 </body>
             </body>
         </body>
-    <geom type="box" pos="2.075 0.0 0.075" size="1.500 0.075 0.075" euler="0 0 90" material="rail_mat" name="rail_rotated" />
-    <geom type="box" pos="4.300 0.0 0.100" size="0.150 1.000 0.100" material="stone_mat" name="stair_up_0" />
-    <geom type="box" pos="4.600 0.0 0.200" size="0.150 1.000 0.200" material="stone_mat" name="stair_up_1" />
-    <geom type="box" pos="4.900 0.0 0.300" size="0.150 1.000 0.300" material="stone_mat" name="stair_up_2" />
-    <geom type="box" pos="5.200 0.0 0.400" size="0.150 1.000 0.400" material="stone_mat" name="stair_up_3" />
-    <geom type="box" pos="5.500 0.0 0.500" size="0.150 1.000 0.500" material="stone_mat" name="stair_up_4" />
-    <geom type="box" pos="5.800 0.0 0.600" size="0.150 1.000 0.600" material="stone_mat" name="stair_up_5" />
-    <geom type="box" pos="6.100 0.0 0.700" size="0.150 1.000 0.700" material="stone_mat" name="stair_up_6" />
-    <geom type="box" pos="6.400 0.0 0.800" size="0.150 1.000 0.800" material="stone_mat" name="stair_up_7" />
-    <geom type="box" pos="7.550 0.0 0.800" size="1.000 1.000 0.800" material="stone_mat" name="stair_platform" />
-    <geom type="box" pos="8.700 0.0 0.800" size="0.150 1.000 0.800" material="stone_mat" name="stair_down_0" />
-    <geom type="box" pos="9.000 0.0 0.700" size="0.150 1.000 0.700" material="stone_mat" name="stair_down_1" />
-    <geom type="box" pos="9.300 0.0 0.600" size="0.150 1.000 0.600" material="stone_mat" name="stair_down_2" />
-    <geom type="box" pos="9.600 0.0 0.500" size="0.150 1.000 0.500" material="stone_mat" name="stair_down_3" />
-    <geom type="box" pos="9.900 0.0 0.400" size="0.150 1.000 0.400" material="stone_mat" name="stair_down_4" />
-    <geom type="box" pos="10.200 0.0 0.300" size="0.150 1.000 0.300" material="stone_mat" name="stair_down_5" />
-    <geom type="box" pos="10.500 0.0 0.200" size="0.150 1.000 0.200" material="stone_mat" name="stair_down_6" />
-    <geom type="box" pos="10.800 0.0 0.100" size="0.150 1.000 0.100" material="stone_mat" name="stair_down_7" />
-    <geom type="box" pos="14.033 0.0 0.625" size="1.250 1.000 0.050" euler="0 -0.524 0" material="stone_mat" name="slope_up" />
-    <geom type="box" pos="16.115 0.0 1.207" size="1.000 1.000 0.050" material="stone_mat" name="slope_platform" />
-    <geom type="box" pos="18.198 0.0 0.625" size="1.250 1.000 0.050" euler="0 0.524 0" material="stone_mat" name="slope_down" />
+    <geom type="box" pos="2.150 0.0 0.100" size="0.150 1.000 0.100" material="stone_mat" name="stair_up_0" />
+    <geom type="box" pos="2.450 0.0 0.200" size="0.150 1.000 0.200" material="stone_mat" name="stair_up_1" />
+    <geom type="box" pos="2.750 0.0 0.300" size="0.150 1.000 0.300" material="stone_mat" name="stair_up_2" />
+    <geom type="box" pos="3.050 0.0 0.400" size="0.150 1.000 0.400" material="stone_mat" name="stair_up_3" />
+    <geom type="box" pos="3.350 0.0 0.500" size="0.150 1.000 0.500" material="stone_mat" name="stair_up_4" />
+    <geom type="box" pos="3.650 0.0 0.600" size="0.150 1.000 0.600" material="stone_mat" name="stair_up_5" />
+    <geom type="box" pos="3.950 0.0 0.700" size="0.150 1.000 0.700" material="stone_mat" name="stair_up_6" />
+    <geom type="box" pos="4.250 0.0 0.800" size="0.150 1.000 0.800" material="stone_mat" name="stair_up_7" />
+    <geom type="box" pos="5.400 0.0 0.800" size="1.000 1.000 0.800" material="stone_mat" name="stair_platform" />
+    <geom type="box" pos="6.550 0.0 0.800" size="0.150 1.000 0.800" material="stone_mat" name="stair_down_0" />
+    <geom type="box" pos="6.850 0.0 0.700" size="0.150 1.000 0.700" material="stone_mat" name="stair_down_1" />
+    <geom type="box" pos="7.150 0.0 0.600" size="0.150 1.000 0.600" material="stone_mat" name="stair_down_2" />
+    <geom type="box" pos="7.450 0.0 0.500" size="0.150 1.000 0.500" material="stone_mat" name="stair_down_3" />
+    <geom type="box" pos="7.750 0.0 0.400" size="0.150 1.000 0.400" material="stone_mat" name="stair_down_4" />
+    <geom type="box" pos="8.050 0.0 0.300" size="0.150 1.000 0.300" material="stone_mat" name="stair_down_5" />
+    <geom type="box" pos="8.350 0.0 0.200" size="0.150 1.000 0.200" material="stone_mat" name="stair_down_6" />
+    <geom type="box" pos="8.650 0.0 0.100" size="0.150 1.000 0.100" material="stone_mat" name="stair_down_7" />
+    <geom type="box" pos="11.883 0.0 0.625" size="1.250 1.000 0.050" euler="0 -0.524 0" material="stone_mat" name="slope_up" />
+    <geom type="box" pos="13.965 0.0 1.207" size="1.000 1.000 0.050" material="stone_mat" name="slope_platform" />
+    <geom type="box" pos="16.048 0.0 0.625" size="1.250 1.000 0.050" euler="0 0.524 0" material="stone_mat" name="slope_down" />
   </worldbody>
 
     <actuator>

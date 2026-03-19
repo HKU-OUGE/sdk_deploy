@@ -211,7 +211,7 @@ if __name__ == "__main__":
     
     # 1. 生成 15cm 的 rail 并旋转 90 度
     # length=3.0 让障碍物够宽不至于让机器人绕过去，rail_width和height均为0.15m
-    gen.add_rails(length=3.0, rail_width=0.15, rail_height=0.15, yaw=90)
+    # gen.add_rails(length=3.0, rail_width=0.15, rail_height=0.15, yaw=90)
     
     # 2. 生成 20cm (0.2m) 的楼梯
     gen.add_stairs(steps=8, step_run=0.3, step_rise=0.2)
