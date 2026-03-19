@@ -79,6 +79,20 @@ cd MuJoCo-LiDAR
 pip3 install --user -e .[taichi] --break-system-packages
 ```
 
+Elevation Mapping:
+```bash
+mkdir -p ~/colcon_ws/src
+cd ~/colcon_ws/src
+git clone https://github.com/ruihuang1124/elevation_mapping_cupy.git
+cd ~/colcon_ws
+colcon build \
+  --symlink-install \
+  --packages-select elevation_map_msgs elevation_mapping_cupy \
+  --cmake-args -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+source install/setup.bash
+ros2 launch elevation_mapping_cupy elevation_mapping.launch.py robot_config:=m20.yaml
+```
+
 
 ```bash
 pip install "numpy < 2.0" mujoco
