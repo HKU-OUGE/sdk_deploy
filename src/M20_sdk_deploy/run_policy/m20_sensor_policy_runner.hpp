@@ -12,6 +12,8 @@
 #include <mutex>
 #include <thread>
 #include <cmath>
+#include <algorithm>
+#include <grid_map_ros/grid_map_ros.hpp>
 
 class M20SensorPolicyRunner : public PolicyRunnerBase {
 private:
@@ -151,44 +153,8 @@ public:
         }
     }
 
-    // 从 GridMap 中提取高度
-    float extractHeight(float x_robot, float y_robot, float robot_x_odom, float robot_y_odom, float robot_yaw, float robot_z_odom) {
-        std::lock_guard<std::mutex> lock(map_mutex_);
-        if (!map_received_) return 0.0f;
 
-        // 获取 elevation layer 的索引
-        int layer_idx = -1;
-        for (size_t i = 0; i < latest_map_.layers.size(); ++i) {
-            if (latest_map_.layers[i] == "elevation") { layer_idx = i; break; }
-        }
-        if (layer_idx == -1) return 0.0f;
-
-        // 计算采样点在世界(odom)系下的坐标
-        float query_x = robot_x_odom + (x_robot * std::cos(robot_yaw) - y_robot * std::sin(robot_yaw));
-        float query_y = robot_y_odom + (x_robot * std::sin(robot_yaw) + y_robot * std::cos(robot_yaw));
-
-        float res = latest_map_.info.resolution;
-        float len_x = latest_map_.info.length_x;
-        float len_y = latest_map_.info.length_y;
-        float map_cx = latest_map_.info.pose.position.x;
-        float map_cy = latest_map_.info.pose.position.y;
-
-        // 计算 GridMap 矩阵索引 (以中心点为基准)
-        int cells_x = std::round(len_x / res);
-        int cells_y = std::round(len_y / res);
-        int idx_x = std::round((len_x / 2.0 - (query_x - map_cx)) / res);
-        int idx_y = std::round((len_y / 2.0 - (query_y - map_cy)) / res);
-
-        if (idx_x < 0 || idx_x >= cells_x || idx_y < 0 || idx_y >= cells_y) return 0.0f;
-
-        float h = latest_map_.data[layer_idx].data[idx_x * cells_y + idx_y];
-        if (std::isnan(h)) return 0.0f;
-
-        // 策略需要的是相对于机器人的高度 (Z差值)
-        return h - robot_z_odom;
-    }
-
-    RobotAction getRobotAction(const RobotBasicState &ro, const UserCommand &uc) override {
+RobotAction getRobotAction(const RobotBasicState &ro, const UserCommand &uc) override {
         Vec3f base_omega = ro.base_omega * omega_scale_;
         Vec3f projected_gravity = ro.base_rot_mat.inverse() * gravity_direction;
         Vec3f command = Vec3f(uc.forward_vel_scale, uc.side_vel_scale, uc.turnning_vel_scale);
@@ -228,12 +194,47 @@ public:
             // TF 失败时默认高度图为 0
         }
 
-        // 187 个点 = 17(X轴) x 11(Y轴) 网格 (标准 Legged Gym 配置: 1.6m x 1.0m, 分辨率 0.1m)
+        grid_map_msgs::msg::GridMap local_map_msg;
+        bool has_map = false;
+        {
+            std::lock_guard<std::mutex> lock(map_mutex_);
+            if (map_received_) {
+                local_map_msg = latest_map_;
+                has_map = true;
+            }
+        }
+
+        grid_map::GridMap local_grid_map;
+        bool map_converted = false;
+        if (has_map) {
+            // 将 ROS 消息转换为 C++ GridMap 对象
+            map_converted = grid_map::GridMapRosConverter::fromMessage(local_map_msg, local_grid_map);
+        }
+
+        // 187 个点 = 17(X轴) x 11(Y轴) 网格
         int env_idx = proprio_dim_;
         for (float dx = 0.8f; dx >= -0.8f - 1e-5; dx -= 0.1f) {
             for (float dy = -0.5f; dy <= 0.5f + 1e-5; dy += 0.1f) {
                 if (env_idx < proprio_env_dim_) {
-                    proprio_env_data_[env_idx++] = extractHeight(dx, dy, robot_x, robot_y, robot_yaw, robot_z);
+                    float relative_height = 0.0f; // 默认值为平地 0.0
+                    
+                    if (map_converted && local_grid_map.exists("elevation")) {
+                        // 计算采样点在世界(odom)系下的坐标
+                        float query_x = robot_x + (dx * std::cos(robot_yaw) - dy * std::sin(robot_yaw));
+                        float query_y = robot_y + (dx * std::sin(robot_yaw) + dy * std::cos(robot_yaw));
+                        
+                        grid_map::Position pos(query_x, query_y);
+                        
+                        // API：isInside 安全检查越界
+                        if (local_grid_map.isInside(pos)) {
+                            // 自动处理循环缓冲区(Circular Buffer)的真实内存映射
+                            float h = local_grid_map.atPosition("elevation", pos);
+                            if (!std::isnan(h)) {
+                                relative_height = std::clamp(h - robot_z, -1.0f, 1.0f);
+                            }
+                        }
+                    }
+                    proprio_env_data_[env_idx++] = relative_height;
                 }
             }
         }

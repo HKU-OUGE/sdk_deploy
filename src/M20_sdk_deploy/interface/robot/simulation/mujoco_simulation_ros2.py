@@ -277,7 +277,7 @@ class MuJoCoSimulationNode(Node):
 
         msg = PointCloud2()
         msg.header.stamp = self.get_clock().now().to_msg()
-        msg.header.frame_id = "base_link"
+        msg.header.frame_id = "lidar_link"
         msg.height = 1
         msg.width = len(merged_points)
         msg.fields = [
