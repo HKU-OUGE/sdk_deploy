@@ -1,6 +1,12 @@
 
 #pragma once
 
+// === 新增：解决 ROS 2 grid_map 插件与第三方 Eigen 的宏冲突 ===
+#ifndef EIGEN_EMPTY_STRUCT_CTOR
+#define EIGEN_EMPTY_STRUCT_CTOR(X) X() {}
+#endif
+// ==============================================================
+
 #include <Eigen/Dense>
 #include <iostream>
 #include <iomanip>
@@ -53,6 +59,9 @@ namespace types {
         VecXf joint_pos;
         VecXf joint_vel;
         VecXf joint_tau;
+
+        // --- 新增：感知观测数据 (如高程图或雷达深度) ---
+        VecXf perception_obs;
     };
 
     struct RobotAction {

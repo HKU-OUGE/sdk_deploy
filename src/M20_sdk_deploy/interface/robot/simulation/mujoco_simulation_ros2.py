@@ -1,8 +1,8 @@
 """
  * @file mujoco_simulation_ros2.py
  * @brief simulation in mujoco with Real Mid360 LiDAR Simulation (Aligned with Isaac Sim Pose)
- * @author Bo (Percy) Peng / Modified for Sim2Sim True PointCloud
- * @version 2.6
+ * @author Bo (Percy) Peng / Modified for Sim2Sim True PointCloud & Elevation Mapping
+ * @version 2.8
  * @copyright Copyright (c) 2025 DeepRobotics
 """
 
@@ -16,7 +16,6 @@ import numpy as np
 import mujoco
 import mujoco.viewer
 import xml.etree.ElementTree as ET
-# [新增] 引入 TF 相关依赖
 from tf2_ros import TransformBroadcaster
 from geometry_msgs.msg import TransformStamped
 
@@ -27,7 +26,6 @@ try:
     from builtin_interfaces.msg import Time
     from drdds.msg import ImuData, JointsData, JointsDataCmd, MetaType, ImuDataValue, JointsDataValue, JointData, JointDataCmd, GamepadData
     
-    # 引入 ROS 2 点云数据类型和 MuJoCo-LiDAR
     from sensor_msgs.msg import PointCloud2, PointField
     from mujoco_lidar import MjLidarWrapper, scan_gen
 except ImportError as e:
@@ -43,7 +41,6 @@ USE_VIEWER = True
 DT = 0.001
 RENDER_INTERVAL = 50
 
-# Calibaration parameters
 JOINT_DIR = np.array([1, 1, -1, 1, 1, -1, 1, -1, -1, 1, -1, 1, -1, -1, 1, -1], dtype=np.float32)
 POS_OFFSET_DEG = np.array([-25, 229, 160, 0, 25, -131, -200, 0, -25, -229, -160, 0, 25, 131, 200, 0], dtype=np.float32)
 POS_OFFSET_RAD = POS_OFFSET_DEG / 180.0 * np.pi
@@ -145,15 +142,15 @@ class MuJoCoSimulationNode(Node):
         self.joints_pub = self.create_publisher(JointsData, '/JOINTS_DATA', 200)
         self.cmd_sub = self.create_subscription(JointsDataCmd, '/JOINTS_CMD', self._cmd_callback, 50)
         
-        # ================= 真实 Mid360 LiDAR 初始化 =================
-        self.lidar_pub = self.create_publisher(PointCloud2, '/LIDAR_POINT_CLOUD_MERGED', qos_profile_sensor_data)
+        # ================= [修复2] 使用 Reliable QoS =================
+        # 强制使用深度队列的 Reliable QoS，匹配建图节点
+        self.lidar_pub = self.create_publisher(PointCloud2, '/LIDAR_POINT_CLOUD_MERGED', 10)
+        # =============================================================
+        
         self.world_lidar_pts = np.empty((0, 3)) 
         self.vis_geoms_initialized = False 
         try:
-            # 采用 geomgroup 过滤：射线只与 group 0 (地形) 碰撞，避免扫到自身的大腿
             lidar_args = {"geomgroup": [1, 0, 0, 0, 0, 0]}
-            
-            # 单例模式初始化，使用 Taichi 渲染
             self.lidar = MjLidarWrapper(
                 self.model, site_name="lidar_site_front", backend="taichi", args=lidar_args
             )
@@ -162,13 +159,11 @@ class MuJoCoSimulationNode(Node):
         except Exception as e:
             self.get_logger().error(f"[Sim] Failed to init LiDAR: {e}")
             self.lidar = None
-        # =======================================================
         
         self.use_joystick = use_joystick
         if self.use_joystick: self.joystick = JoystickInterface(self)
         self.viewer = mujoco.viewer.launch_passive(self.model, self.data) if USE_VIEWER else None
 
-        # 初始化 TF 广播器
         self.tf_broadcaster = TransformBroadcaster(self)
 
     def _set_initial_pose(self, key: str):
@@ -202,17 +197,24 @@ class MuJoCoSimulationNode(Node):
     def _publish_robot_state(self, step: int):
         q_world = self.data.sensordata[:4]; rpy_rad = self.quaternion_to_euler(q_world)
         body_acc = self.data.sensordata[4:7]; angvel_b = self.data.sensordata[7:10]
+        
+        # ================= [修复1] 统一使用 Wall Time =================
+        # 这是修复 RViz2 中 TF 报错 odom does not exist 的关键！
+        stamp = self.get_clock().now().to_msg()
+        # ==============================================================
+
         imu_msg = ImuData(); imu_msg.header = MetaType(); imu_msg.header.frame_id = 0
-        stamp = Time(); sec = int(self.timestamp); nanosec = int((self.timestamp - sec) * 1e9)
-        stamp.sec = sec; stamp.nanosec = nanosec; imu_msg.header.stamp = stamp
+        imu_msg.header.stamp = stamp
         imu_msg.data = ImuDataValue()
         imu_msg.data.roll = float(rpy_rad[0]*180/np.pi); imu_msg.data.pitch = float(rpy_rad[1]*180/np.pi); imu_msg.data.yaw = float(rpy_rad[2]*180/np.pi)
         imu_msg.data.omega_x = float(angvel_b[0]); imu_msg.data.omega_y = float(angvel_b[1]); imu_msg.data.omega_z = float(angvel_b[2])
         imu_msg.data.acc_x = float(body_acc[0]); imu_msg.data.acc_y = float(body_acc[1]); imu_msg.data.acc_z = float(body_acc[2])
         self.imu_pub.publish(imu_msg)
+        
         q = self.data.qpos[7:7 + self.dof_num]; dq = self.data.qvel[6:6 + self.dof_num]; tau = self.input_tq.flatten()
         pub_pos = (q - POS_OFFSET_RAD) * JOINT_DIR; pub_vel = dq * JOINT_DIR; pub_tau = tau * JOINT_DIR 
-        joints_msg = JointsData(); joints_msg.header = MetaType(); joints_msg.header.frame_id = 0; joints_msg.header.stamp = stamp
+        joints_msg = JointsData(); joints_msg.header = MetaType(); joints_msg.header.frame_id = 0; 
+        joints_msg.header.stamp = stamp
         joints_msg.data = JointsDataValue(); joints_msg.data.joints_data = [JointData() for _ in range(self.dof_num)]
         for i in range(self.dof_num):
             joint = joints_msg.data.joints_data[i]; joint.name = [32]*4; joint.status_word = 1
@@ -220,30 +222,26 @@ class MuJoCoSimulationNode(Node):
             joint.motion_temp = 40.0; joint.driver_temp = 40.0
         self.joints_pub.publish(joints_msg)
 
-        # ================= [新增] 发布 odom -> base_link TF =================
+        # 发布 odom -> base_link TF 
         t = TransformStamped()
         t.header.stamp = stamp
         t.header.frame_id = 'odom'
         t.child_frame_id = 'base_link'
         
-        # 提取真实位姿
         base_pos = self.data.qpos[:3]
-        base_quat = self.data.qpos[3:7]  # MuJoCo 的四元数格式是 (w, x, y, z)
+        base_quat = self.data.qpos[3:7]  
         
         t.transform.translation.x = float(base_pos[0])
         t.transform.translation.y = float(base_pos[1])
         t.transform.translation.z = float(base_pos[2])
         
-        # ROS 2 TF 的四元数格式要求是 (x, y, z, w)
         t.transform.rotation.x = float(base_quat[1])
         t.transform.rotation.y = float(base_quat[2])
         t.transform.rotation.z = float(base_quat[3])
         t.transform.rotation.w = float(base_quat[0])
         
         self.tf_broadcaster.sendTransform(t)
-        # =====================================================================
 
-    # ================= LiDAR 物理扫描与点云发布 =================
     def _publish_lidar_state(self, step: int):
         if self.lidar is None: return
             
@@ -255,7 +253,6 @@ class MuJoCoSimulationNode(Node):
         
         world_pts_list = []
         
-        # 扫描前置雷达
         self.lidar.trace_rays(self.data, rays_theta, rays_phi, site_name="lidar_site_front")
         local_pts_front = self.lidar.get_hit_points()
         if len(local_pts_front) > 0:
@@ -264,7 +261,6 @@ class MuJoCoSimulationNode(Node):
             world_pts_list.append(world_pts_front)
         else: base_pts_front = np.empty((0, 3))
             
-        # 扫描后置雷达
         self.lidar.trace_rays(self.data, rays_theta, rays_phi, site_name="lidar_site_rear")
         local_pts_rear = self.lidar.get_hit_points()
         if len(local_pts_rear) > 0:
@@ -273,14 +269,12 @@ class MuJoCoSimulationNode(Node):
             world_pts_list.append(world_pts_rear)
         else: base_pts_rear = np.empty((0, 3))
             
-        # 缓存世界坐标点云，供本地 GUI 渲染
         if len(world_pts_list) > 0: self.world_lidar_pts = np.vstack(world_pts_list)
         else: self.world_lidar_pts = np.empty((0, 3))
             
         merged_points = np.vstack((base_pts_front, base_pts_rear))
         if len(merged_points) == 0: return
 
-        # 发布至 ROS 2 (供你的 C++ 算法订阅并切片处理)
         msg = PointCloud2()
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.header.frame_id = "base_link"
@@ -297,7 +291,6 @@ class MuJoCoSimulationNode(Node):
         msg.is_dense = True
         msg.data = merged_points.astype(np.float32).tobytes()
         self.lidar_pub.publish(msg)
-    # =======================================================
 
     def start(self):
         step = 0; last_time = time.time()
@@ -310,13 +303,11 @@ class MuJoCoSimulationNode(Node):
                 self.timestamp = step * DT
                 if step % 5 == 0: self._publish_robot_state(step)
                 
-                # 10Hz LiDAR 物理扫描
                 if step % int(0.1 / DT) == 0: self._publish_lidar_state(step)
                 
                 if self.use_joystick and step % 10 == 0: self.joystick.update()
                     
                 if self.viewer and step % RENDER_INTERVAL == 0: 
-                    # ================= 密集可视化渲染 =================
                     if hasattr(self, 'world_lidar_pts') and len(self.world_lidar_pts) > 0:
                         with self.viewer.lock(): 
                             max_g = self.viewer.user_scn.maxgeom
@@ -324,22 +315,14 @@ class MuJoCoSimulationNode(Node):
                                 for i in range(max_g):
                                     mujoco.mjv_initGeom(
                                         self.viewer.user_scn.geoms[i], type=mujoco.mjtGeom.mjGEOM_SPHERE,  
-                                        # 【修改 1】缩小球体半径到 0.01，让密集的点云看起来更精细
                                         size=[0.01, 0, 0], pos=np.zeros(3), mat=np.eye(3).flatten(), rgba=np.array([0.0, 1.0, 0.0, 0.6]) 
                                     )
                                 self.vis_geoms_initialized = True
                             
-                            # 【修改 2】改为 [::1] 不降采样，或者 [::2] 保留一半。
                             vis_pts = self.world_lidar_pts[::2] 
-                            
-                            # 注意：MuJoCo 的 user_scn 默认有一个最大几何体数量上限（通常是 1000 左右）
-                            # 这里会安全地截断，自动渲染到系统支持的极限点数
                             num_pts = min(len(vis_pts), max_g)
                             self.viewer.user_scn.ngeom = num_pts
-                            
-                            for i in range(num_pts): 
-                                self.viewer.user_scn.geoms[i].pos[:] = vis_pts[i]
-                    # ==============================================================
+                            for i in range(num_pts): self.viewer.user_scn.geoms[i].pos[:] = vis_pts[i]
                     self.viewer.sync()
             rclpy.spin_once(self, timeout_sec=0.0)
 

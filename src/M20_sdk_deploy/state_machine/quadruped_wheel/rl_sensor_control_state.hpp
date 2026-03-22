@@ -5,18 +5,11 @@
 #pragma once
 #include "state_base.h"
 #include "policy_runner_base.hpp"
-#include "m20_policy_runner.hpp" // 目前复用盲走Runner
+#include "m20_sensor_policy_runner.hpp" // [修改 1] 引入新的带感知的 Runner 头文件
 #include "robot_interface.h"
 #include "user_command_interface.h"
 #include "json.hpp"
 #include "basic_function.hpp"
-
-// ================= [感知预留区 1：包含 ROS 2 和 GridMap 头文件] =================
-// #include <rclcpp/rclcpp.hpp>
-// #include <grid_map_msgs/msg/grid_map.hpp>
-// #include <grid_map_ros/grid_map_ros.hpp>
-// #include <mutex>
-// ==============================================================================
 
 namespace qw {
     class RLSensorControlState : public StateBase {
@@ -25,7 +18,7 @@ namespace qw {
         int state_run_cnt_;
 
         std::shared_ptr<PolicyRunnerBase> policy_ptr_;
-        std::shared_ptr<M20PolicyRunner> m20_policy_;
+        std::shared_ptr<M20SensorPolicyRunner> m20_policy_; // [修改 2] 实例化带感知的 Runner
 
         std::thread run_policy_thread_;
         bool start_flag_ = true;
@@ -34,14 +27,6 @@ namespace qw {
 
         Eigen::MatrixXf acc_rot = Eigen::MatrixXf::Zero(20, 3);
         int acc_rot_count = 0;
-
-        // ================= [感知预留区 2：声明 ROS 2 节点和高程图变量] =================p
-        // rclcpp::Node::SharedPtr ros_node_;
-        // rclcpp::Subscription<grid_map_msgs::msg::GridMap>::SharedPtr map_sub_;
-        // std::thread ros_spin_thread_;
-        // std::mutex map_mutex_;
-        // Eigen::VectorXf current_heightmap_obs_;
-        // ===============================================================================
 
         void init_rbs_() {
             rbs_.flt_base_acc_mat = Eigen::MatrixXf::Zero(20, 3);
@@ -69,11 +54,9 @@ namespace qw {
                     timespec start_timestamp, end_timestamp;
                     clock_gettime(CLOCK_MONOTONIC, &start_timestamp);
 
-                    // ================= [感知预留区 3：提取高程并传入策略] =================
-                    // ExtractHeightmapObservation();
-                    // 目前还是调用盲走接口
+                    // [修改 3] 因为提取高程网格和历史队列都在 M20SensorPolicyRunner 内部封装好了
+                    // 所以这里代码极为清爽，依然只需要这一句调用！
                     auto ra = policy_ptr_->getRobotAction(rbs_, *(uc_ptr_->GetUserCommand()));
-                    // ======================================================================
 
                     MatXf res = ra.ConvertToMat();
 
@@ -96,9 +79,10 @@ namespace qw {
             if (robot_name_ == RobotName::M20) {
                 namespace fs = std::filesystem;
                 fs::path base = fs::path(__FILE__).parent_path();
-                // 第一步验证：依然加载盲走的 ONNX 模型
-                auto model_path = fs::canonical(base / ".." / ".." / "policy" / "policy_blind_hard.onnx");
-                m20_policy_ = std::make_shared<M20PolicyRunner>("m20_sensor_policy", model_path.string());
+
+                // [修改 4] 加载你最新导出的 unified_policy.onnx 模型
+                auto model_path = fs::canonical(base / ".." / ".." / "policy" / "unified_policy.onnx");
+                m20_policy_ = std::make_shared<M20SensorPolicyRunner>("m20_sensor_policy", model_path.string());
             }
 
             policy_ptr_ = m20_policy_;
@@ -108,11 +92,6 @@ namespace qw {
             }
             policy_ptr_->DisplayPolicyInfo();
             init_rbs_();
-
-            // ================= [感知预留区 4：初始化 ROS 节点和订阅] =================
-            // ros_node_ = rclcpp::Node::make_shared("m20_rl_perception_node");
-            // ...
-            // =========================================================================
         }
 
         ~RLSensorControlState() {}
@@ -120,10 +99,6 @@ namespace qw {
         virtual void OnEnter() {
             state_run_cnt_ = -1;
             start_flag_ = true;
-
-            // ================= [感知预留区 5：启动 ROS Spin 线程] =================
-            // ros_spin_thread_ = std::thread([this]() { rclcpp::spin(ros_node_); });
-            // ======================================================================
 
             run_policy_thread_ = std::thread(std::bind(&RLSensorControlState::PolicyRunner, this));
             policy_ptr_->OnEnter(rbs_);
@@ -134,11 +109,6 @@ namespace qw {
         virtual void OnExit() {
             start_flag_ = false;
             run_policy_thread_.join();
-
-            // ================= [感知预留区 6：关闭 ROS Spin 线程] =================
-            // rclcpp::shutdown();
-            // if (ros_spin_thread_.joinable()) ros_spin_thread_.join();
-            // ======================================================================
 
             state_run_cnt_ = -1;
         }
