@@ -37,7 +37,7 @@ private:
 
     // 输入历史队列
     std::deque<std::vector<float>> history_buffer_;
-
+    bool is_first_step_ = true;
     // 输入张量 Shape
     std::array<int64_t, 2> shape_proprio_env_ = {1, proprio_env_dim_};
     std::array<int64_t, 2> shape_estimator_   = {1, estimator_dim_};
@@ -148,9 +148,7 @@ public:
     void OnEnter(const RobotBasicState &rbs) override {
         std::fill(hidden_state_data_.begin(), hidden_state_data_.end(), 0.0f);
         last_action_eigen.setZero(16);
-        for (auto& frame : history_buffer_) {
-            std::fill(frame.begin(), frame.end(), 0.0f);
-        }
+        is_first_step_ = true;
     }
 
 
@@ -160,8 +158,8 @@ RobotAction getRobotAction(const RobotBasicState &ro, const UserCommand &uc) ove
         Vec3f command = Vec3f(uc.forward_vel_scale, uc.side_vel_scale, uc.turnning_vel_scale);
 
         for (int i = 0; i < action_dim; ++i) {
-            joint_pos_rl(i) = ro.joint_pos(robot2policy_idx[i]);
-            joint_vel_rl(i) = ro.joint_vel(robot2policy_idx[i]) * dof_vel_scale_;
+            joint_pos_rl(i) = ro.joint_pos(policy2robot_idx[i]);
+            joint_vel_rl(i) = ro.joint_vel(policy2robot_idx[i]) * dof_vel_scale_;
         }
         joint_pos_rl.segment(12, 4).setZero();
         joint_pos_rl -= dof_default_eigen_policy;
@@ -172,10 +170,18 @@ RobotAction getRobotAction(const RobotBasicState &ro, const UserCommand &uc) ove
         std::copy(curr_proprio.begin(), curr_proprio.end(), proprio_env_data_.begin());
 
         // ====== 2. 更新并组装 Estimator History (855 维) ======
-        history_buffer_.pop_back();
-        history_buffer_.push_front(curr_proprio); // 最新的放在最前
+        // 【修复 Bug 2】：切入的第一帧，用当前真实状态填满 15 帧记忆，避免 0 冲击！
+        if (is_first_step_) {
+            for (auto& frame : history_buffer_) {
+                std::copy(curr_proprio.begin(), curr_proprio.end(), frame.begin());
+            }
+            is_first_step_ = false;
+        } else {
+            history_buffer_.pop_back();
+            history_buffer_.push_front(curr_proprio); 
+        }
 
-        // 展平历史到一维数组 (注意顺序：从最老 t-14 到最新 t)
+        // 展平历史到一维数组 (从最老 t-14 到最新 t，完全对齐 Isaac Lab)
         int offset = 0;
         for (int i = history_len_ - 1; i >= 0; --i) {
             std::copy(history_buffer_[i].begin(), history_buffer_[i].end(), estimator_history_data_.begin() + offset);
@@ -183,7 +189,7 @@ RobotAction getRobotAction(const RobotBasicState &ro, const UserCommand &uc) ove
         }
 
         // ====== 3. 采样 187 维高程网格 ======
-        float robot_x = 0, robot_y = 0, robot_z = 0, robot_yaw = 0;
+        float robot_x = 0, robot_y = 0, robot_z = 0.45f, robot_yaw = 0;
         try {
             geometry_msgs::msg::TransformStamped t = tf_buffer_->lookupTransform("odom", "base_link", tf2::TimePointZero);
             robot_x = t.transform.translation.x; robot_y = t.transform.translation.y; robot_z = t.transform.translation.z;
@@ -191,8 +197,11 @@ RobotAction getRobotAction(const RobotBasicState &ro, const UserCommand &uc) ove
             tf2::Matrix3x3 m(q); double roll, pitch, yaw; m.getRPY(roll, pitch, yaw);
             robot_yaw = yaw;
         } catch (const tf2::TransformException & ex) {
-            // TF 失败时默认高度图为 0
+            // 获取不到 TF 时，默认高度保持 0.45f
         }
+
+
+        float default_relative_height = -1.0f;
 
         grid_map_msgs::msg::GridMap local_map_msg;
         bool has_map = false;
@@ -207,30 +216,25 @@ RobotAction getRobotAction(const RobotBasicState &ro, const UserCommand &uc) ove
         grid_map::GridMap local_grid_map;
         bool map_converted = false;
         if (has_map) {
-            // 将 ROS 消息转换为 C++ GridMap 对象
             map_converted = grid_map::GridMapRosConverter::fromMessage(local_map_msg, local_grid_map);
         }
 
-        // 187 个点 = 17(X轴) x 11(Y轴) 网格
         int env_idx = proprio_dim_;
-        for (float dx = 0.8f; dx >= -0.8f - 1e-5; dx -= 0.1f) {
-            for (float dy = -0.5f; dy <= 0.5f + 1e-5; dy += 0.1f) {
+        for (float dy = -0.5f; dy <= 0.5f + 1e-5; dy += 0.1f) {
+            for (float dx = -0.8f; dx <= 0.8f + 1e-5; dx += 0.1f) {
                 if (env_idx < proprio_env_dim_) {
-                    float relative_height = 0.0f; // 默认值为平地 0.0
+                    float relative_height = default_relative_height; 
                     
                     if (map_converted && local_grid_map.exists("elevation")) {
-                        // 计算采样点在世界(odom)系下的坐标
                         float query_x = robot_x + (dx * std::cos(robot_yaw) - dy * std::sin(robot_yaw));
                         float query_y = robot_y + (dx * std::sin(robot_yaw) + dy * std::cos(robot_yaw));
                         
                         grid_map::Position pos(query_x, query_y);
-                        
-                        // API：isInside 安全检查越界
                         if (local_grid_map.isInside(pos)) {
-                            // 自动处理循环缓冲区(Circular Buffer)的真实内存映射
                             float h = local_grid_map.atPosition("elevation", pos);
                             if (!std::isnan(h)) {
-                                relative_height = std::clamp(h - robot_z, -1.0f, 1.0f);
+                                // 【修正 2】：严格对齐 IsaacLab 的公式 (h - robot_z + 0.5f)
+                                relative_height = std::clamp(h - robot_z + 0.5f, -1.0f, 1.0f);
                             }
                         }
                     }
@@ -255,7 +259,7 @@ RobotAction getRobotAction(const RobotBasicState &ro, const UserCommand &uc) ove
         last_action_eigen = current_action_eigen;
 
         for (int i = 0; i < action_dim; ++i) {
-            tmp_action_eigen(i) = current_action_eigen(policy2robot_idx[i]) * action_scale_robot[i];
+            tmp_action_eigen(i) = current_action_eigen(robot2policy_idx[i]) * action_scale_robot[i];
         }
         tmp_action_eigen += dof_default_eigen_robot;
 
