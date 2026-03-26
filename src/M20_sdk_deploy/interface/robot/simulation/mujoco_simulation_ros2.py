@@ -18,14 +18,14 @@ import mujoco.viewer
 import xml.etree.ElementTree as ET
 from tf2_ros import TransformBroadcaster
 from geometry_msgs.msg import TransformStamped
-
+import math
 try:
     import rclpy
     from rclpy.node import Node
     from rclpy.qos import qos_profile_sensor_data
     from builtin_interfaces.msg import Time
     from drdds.msg import ImuData, JointsData, JointsDataCmd, MetaType, ImuDataValue, JointsDataValue, JointData, JointDataCmd, GamepadData
-    
+    from grid_map_msgs.msg import GridMap
     from sensor_msgs.msg import PointCloud2, PointField
     from mujoco_lidar import MjLidarWrapper, scan_gen
 except ImportError as e:
@@ -146,7 +146,12 @@ class MuJoCoSimulationNode(Node):
         # 强制使用深度队列的 Reliable QoS，匹配建图节点
         self.lidar_pub = self.create_publisher(PointCloud2, '/LIDAR_POINT_CLOUD_MERGED', 10)
         # =============================================================
-        
+        self.elevation_sub = self.create_subscription(
+            GridMap, 
+            '/elevation_mapping_node/elevation_map_raw', 
+            self._grid_map_callback, 
+            10)
+        self.elevation_pts = np.empty((0, 3))
         self.world_lidar_pts = np.empty((0, 3)) 
         self.vis_geoms_initialized = False 
 
@@ -368,6 +373,62 @@ class MuJoCoSimulationNode(Node):
         msg.data = merged_points.astype(np.float32).tobytes()
         self.lidar_pub.publish(msg)
 
+    def _grid_map_callback(self, msg: GridMap):
+        try:
+            layer_idx = msg.layers.index('elevation')
+        except ValueError:
+            return
+            
+        resolution = msg.info.resolution
+        length_x = msg.info.length_x
+        length_y = msg.info.length_y
+        center_x = msg.info.pose.position.x
+        center_y = msg.info.pose.position.y
+        # 正确的代码
+        frame_id = msg.header.frame_id
+        
+        cells_x = int(round(length_x / resolution))
+        cells_y = int(round(length_y / resolution))
+        data = msg.data[layer_idx].data
+        
+        base_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "base_link")
+        if base_id != -1:
+            base_pos = self.data.xpos[base_id]
+            base_mat = self.data.xmat[base_id].reshape(3, 3)
+            rx, ry = base_pos[0], base_pos[1]
+        else:
+            return  # 若获取不到基座信息，则安全退出
+        
+        pts = []
+        step = 2 
+        
+        for idx_x in range(0, cells_x, step):
+            for idx_y in range(0, cells_y, step):
+                idx = idx_x * cells_y + idx_y
+                if idx >= len(data):
+                    continue
+                
+                val = data[idx]
+                if not math.isnan(val):
+
+                    px = center_x + length_x / 2.0 - (idx_y + 0.5) * resolution
+                    py = center_y + length_y / 2.0 - (idx_x + 0.5) * resolution
+                    pz = val
+                    
+
+                    if frame_id == "base_link":
+                        local_pt = np.array([px, py, pz])
+                        world_pt = base_mat @ local_pt + base_pos
+                        wx, wy, wz = world_pt[0], world_pt[1], world_pt[2]
+                    else:
+
+                        wx, wy, wz = px, py, pz
+                    
+
+                    # if (wx - rx)**2 + (wy - ry)**2 < 2.25:
+                    pts.append([wx, wy, wz])
+                        
+        self.elevation_pts = np.array(pts)
     def start(self):
         step = 0; last_time = time.time()
         print("[Sim] Starting simulation loop...", file=sys.stderr, flush=True)
@@ -384,21 +445,37 @@ class MuJoCoSimulationNode(Node):
                 if self.use_joystick and step % 10 == 0: self.joystick.update()
                     
                 if self.viewer and step % RENDER_INTERVAL == 0: 
-                    if hasattr(self, 'world_lidar_pts') and len(self.world_lidar_pts) > 0:
-                        with self.viewer.lock(): 
-                            max_g = self.viewer.user_scn.maxgeom
-                            if not self.vis_geoms_initialized:
-                                for i in range(max_g):
-                                    mujoco.mjv_initGeom(
-                                        self.viewer.user_scn.geoms[i], type=mujoco.mjtGeom.mjGEOM_SPHERE,  
-                                        size=[0.01, 0, 0], pos=np.zeros(3), mat=np.eye(3).flatten(), rgba=np.array([0.0, 1.0, 0.0, 0.6]) 
-                                    )
-                                self.vis_geoms_initialized = True
-                            
-                            vis_pts = self.world_lidar_pts[::2] 
-                            num_pts = min(len(vis_pts), max_g)
-                            self.viewer.user_scn.ngeom = num_pts
-                            for i in range(num_pts): self.viewer.user_scn.geoms[i].pos[:] = vis_pts[i]
+                    with self.viewer.lock(): 
+                        max_g = self.viewer.user_scn.maxgeom
+                        if not self.vis_geoms_initialized:
+                            for i in range(max_g):
+                                mujoco.mjv_initGeom(
+                                    self.viewer.user_scn.geoms[i], type=mujoco.mjtGeom.mjGEOM_SPHERE,  
+                                    size=[0.02, 0, 0], pos=np.zeros(3), mat=np.eye(3).flatten(), rgba=np.array([0.0, 0.0, 0.0, 0.0]) 
+                                )
+                            self.vis_geoms_initialized = True
+                        
+                        geom_idx = 0
+                        
+                        # ================= LiDAR (绿色) =================
+                        if hasattr(self, 'world_lidar_pts') and len(self.world_lidar_pts) > 0:
+                            vis_pts = self.world_lidar_pts[::2]  # 降采样
+                            num_pts = min(len(vis_pts), max_g // 2)
+                            for i in range(num_pts):
+                                self.viewer.user_scn.geoms[geom_idx].pos[:] = vis_pts[i]
+                                self.viewer.user_scn.geoms[geom_idx].rgba[:] = [0.0, 1.0, 0.0, 0.6]
+                                geom_idx += 1
+                                
+                        # ================= 高程图 (红色) =================
+                        if hasattr(self, 'elevation_pts') and len(self.elevation_pts) > 0:
+                            vis_elev = self.elevation_pts
+                            num_elev = min(len(vis_elev), max_g - geom_idx) # 使用剩余的几何体配额
+                            for i in range(num_elev):
+                                self.viewer.user_scn.geoms[geom_idx].pos[:] = vis_elev[i]
+                                self.viewer.user_scn.geoms[geom_idx].rgba[:] = [1.0, 0.0, 0.0, 0.8]
+                                geom_idx += 1
+                        
+                        self.viewer.user_scn.ngeom = geom_idx
                     self.viewer.sync()
             rclpy.spin_once(self, timeout_sec=0.0)
 
