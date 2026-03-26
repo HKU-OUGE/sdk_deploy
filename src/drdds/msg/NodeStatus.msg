@@ -1,0 +1,2 @@
+MetaType meta
+NodeStatusValue data

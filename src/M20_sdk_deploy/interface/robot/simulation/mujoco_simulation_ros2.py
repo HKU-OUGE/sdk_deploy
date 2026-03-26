@@ -149,17 +149,38 @@ class MuJoCoSimulationNode(Node):
         
         self.world_lidar_pts = np.empty((0, 3)) 
         self.vis_geoms_initialized = False 
-        try:
-            lidar_args = {"geomgroup": [1, 0, 0, 0, 0, 0]}
-            self.lidar = MjLidarWrapper(
-                self.model, site_name="lidar_site_front", backend="taichi", args=lidar_args
-            )
-            self.livox_generator = scan_gen.LivoxGenerator("mid360") 
-            self.get_logger().info("[Sim] Physical Mid360 LiDAR engine initialized successfully.")
-        except Exception as e:
-            self.get_logger().error(f"[Sim] Failed to init LiDAR: {e}")
-            self.lidar = None
+
+        self.num_lasers = 32
+        self.num_horizontal = 180
+        self.num_rays = self.num_lasers * self.num_horizontal
         
+        theta_angles = np.linspace(-np.pi, np.pi, self.num_horizontal)
+        phi_angles = np.linspace(0.0, np.pi/2, self.num_lasers) 
+        Theta, Phi = np.meshgrid(theta_angles, phi_angles)
+        
+        X = np.cos(Phi) * np.cos(Theta)
+        Y = np.cos(Phi) * np.sin(Theta)
+        Z = np.sin(Phi)
+        self.ray_dirs_local = np.stack([X.flatten(), Y.flatten(), Z.flatten()], axis=1)
+        
+        self.front_pos = np.array([0.32028, 0.0, -0.013])
+        self.front_rot = np.array([
+            [ 0.0,  0.0,  1.0],
+            [ 0.0, -1.0,  0.0],
+            [ 1.0,  0.0,  0.0]
+        ], dtype=np.float64)
+
+        self.rear_pos = np.array([-0.32028, 0.0, -0.013])
+        self.rear_rot = np.array([
+            [ 0.0,  0.0, -1.0],
+            [ 0.0,  1.0,  0.0],
+            [ 1.0,  0.0,  0.0]
+        ], dtype=np.float64)
+
+        self.geomgroup = np.array([1, 0, 0, 0, 0, 0], dtype=np.uint8)
+        
+        self.get_logger().info("[Sim] Native mj_multiRay LiDARs aligned with config.yaml.")
+        # =================================================================
         self.use_joystick = use_joystick
         if self.use_joystick: self.joystick = JoystickInterface(self)
         self.viewer = mujoco.viewer.launch_passive(self.model, self.data) if USE_VIEWER else None
@@ -242,42 +263,97 @@ class MuJoCoSimulationNode(Node):
         
         self.tf_broadcaster.sendTransform(t)
 
-    def _publish_lidar_state(self, step: int):
-        if self.lidar is None: return
-            
-        rays_theta, rays_phi = self.livox_generator.sample_ray_angles()
+    def _trace_single_lidar(self, site_name, base_pos, base_mat):
+        site_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_SITE, site_name)
+        if site_id == -1: return np.empty((0, 3))
         
+        sensor_pos = self.data.site_xpos[site_id]
+        sensor_mat = self.data.site_xmat[site_id].reshape(3, 3)
+        
+        pnt = sensor_pos.astype(np.float64)
+        vec = (self.ray_dirs_local @ sensor_mat.T).astype(np.float64).flatten()
+        
+        geomid = np.zeros(self.num_rays, dtype=np.int32)
+        dist = np.zeros(self.num_rays, dtype=np.float64)
+        
+        # 排除身体
+        body_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "base_link")
+        
+        mujoco.mj_multiRay(
+            self.model, self.data,
+            pnt, vec,
+            self.geomgroup,
+            1,          # flg_static
+            body_id,    # bodyexclude
+            geomid, dist,
+            self.num_rays,
+            10.0        # cutoff (最大量程 10 米)
+        )
+        
+        # 排除打中天空的 -1 和无效距离
+        valid_mask = (geomid != -1) & (dist > 0) & (dist < 3.0)
+        if not np.any(valid_mask): return np.empty((0, 3))
+        
+        valid_dists = dist[valid_mask]
+        valid_dirs_local = self.ray_dirs_local[valid_mask]
+        
+        # 从距离反推坐标：局部 -> 世界 -> base_link
+        local_pts = valid_dirs_local * valid_dists[:, np.newaxis]
+        world_pts = local_pts @ sensor_mat.T + sensor_pos
+        base_pts = (world_pts - base_pos) @ base_mat
+        
+        return base_pts
+
+    def _publish_lidar_state(self, step: int):
         base_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "base_link")
         base_pos = self.data.xpos[base_id]
         base_mat = self.data.xmat[base_id].reshape(3, 3)
-        
-        world_pts_list = []
-        
-        self.lidar.trace_rays(self.data, rays_theta, rays_phi, site_name="lidar_site_front")
-        local_pts_front = self.lidar.get_hit_points()
-        if len(local_pts_front) > 0:
-            world_pts_front = local_pts_front @ self.lidar.sensor_rotation.T + self.lidar.sensor_position
-            base_pts_front = (world_pts_front - base_pos) @ base_mat
-            world_pts_list.append(world_pts_front)
-        else: base_pts_front = np.empty((0, 3))
-            
-        self.lidar.trace_rays(self.data, rays_theta, rays_phi, site_name="lidar_site_rear")
-        local_pts_rear = self.lidar.get_hit_points()
-        if len(local_pts_rear) > 0:
-            world_pts_rear = local_pts_rear @ self.lidar.sensor_rotation.T + self.lidar.sensor_position
-            base_pts_rear = (world_pts_rear - base_pos) @ base_mat
-            world_pts_list.append(world_pts_rear)
-        else: base_pts_rear = np.empty((0, 3))
-            
-        if len(world_pts_list) > 0: self.world_lidar_pts = np.vstack(world_pts_list)
-        else: self.world_lidar_pts = np.empty((0, 3))
-            
-        merged_points = np.vstack((base_pts_front, base_pts_rear))
-        if len(merged_points) == 0: return
 
+        def trace_rays(sensor_pos_offset, sensor_rot):
+
+            rays_base = self.ray_dirs_local @ sensor_rot.T
+            rays_world = rays_base @ base_mat.T
+            sensor_pos_world = base_pos + base_mat @ sensor_pos_offset
+            
+            pnt = sensor_pos_world.astype(np.float64)
+            vec = rays_world.astype(np.float64).flatten() # C++ 需要 1D array
+            
+            geomid = np.zeros(self.num_rays, dtype=np.int32)
+            dist = np.zeros(self.num_rays, dtype=np.float64)
+            
+            mujoco.mj_multiRay(
+                self.model, self.data,
+                pnt, vec,
+                self.geomgroup,
+                1, base_id,
+                geomid, dist,
+                self.num_rays, 10.0
+            )
+            
+            valid = (geomid != -1) & (dist > 0) & (dist < 3.0)
+            if not np.any(valid): return np.empty((0, 3))
+            
+  
+            pts_world = pnt + rays_world[valid] * dist[valid][:, np.newaxis]
+            pts_base = (pts_world - base_pos) @ base_mat
+            return pts_base
+
+
+        base_pts_front = trace_rays(self.front_pos, self.front_rot)
+        base_pts_rear = trace_rays(self.rear_pos, self.rear_rot)
+
+        merged_points = np.vstack((base_pts_front, base_pts_rear))
+        if len(merged_points) == 0: 
+            self.world_lidar_pts = np.empty((0, 3))
+            return
+            
+        # 用于 RViz 的仿真绿点可视化
+        self.world_lidar_pts = merged_points @ base_mat.T + base_pos
+
+        # 发布点云
         msg = PointCloud2()
         msg.header.stamp = self.get_clock().now().to_msg()
-        msg.header.frame_id = "lidar_link"
+        msg.header.frame_id = "base_link"
         msg.height = 1
         msg.width = len(merged_points)
         msg.fields = [
