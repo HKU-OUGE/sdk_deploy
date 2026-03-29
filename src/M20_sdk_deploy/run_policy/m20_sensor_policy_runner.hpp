@@ -70,8 +70,8 @@ private:
     std::unique_ptr<Ort::Session> session_;
     Ort::MemoryInfo memory_info{nullptr};
 
-    // ONNX 节点名称匹配 (如导出时名称不同，请在这里修改)
-    const char* input_names_[3] = {"proprio_and_env", "estimator_history", "h0"};
+    // const char* input_names_[3] = {"proprio_and_env", "estimator_history", "h0"};
+    const char* input_names_[2] = {"proprio_and_env", "h0"};
     const char* output_names_[2] = {"action", "next_h0"};
 
     // ROS 2 高程图相关
@@ -170,7 +170,6 @@ RobotAction getRobotAction(const RobotBasicState &ro, const UserCommand &uc) ove
         std::copy(curr_proprio.begin(), curr_proprio.end(), proprio_env_data_.begin());
 
         // ====== 2. 更新并组装 Estimator History (855 维) ======
-        // 【修复 Bug 2】：切入的第一帧，用当前真实状态填满 15 帧记忆，避免 0 冲击！
         if (is_first_step_) {
             for (auto& frame : history_buffer_) {
                 std::copy(curr_proprio.begin(), curr_proprio.end(), frame.begin());
@@ -181,7 +180,7 @@ RobotAction getRobotAction(const RobotBasicState &ro, const UserCommand &uc) ove
             history_buffer_.push_front(curr_proprio); 
         }
 
-        // 展平历史到一维数组 (从最老 t-14 到最新 t，完全对齐 Isaac Lab)
+        // 从最老 (t-14) 到最新 (t)，严格对齐 IsaacLab 的 shifts=-1
         int offset = 0;
         for (int i = history_len_ - 1; i >= 0; --i) {
             std::copy(history_buffer_[i].begin(), history_buffer_[i].end(), estimator_history_data_.begin() + offset);
@@ -246,11 +245,14 @@ RobotAction getRobotAction(const RobotBasicState &ro, const UserCommand &uc) ove
         // ====== 4. 执行 ONNX 多张量推理 ======
         std::vector<Ort::Value> input_tensors;
         input_tensors.emplace_back(Ort::Value::CreateTensor<float>(memory_info, proprio_env_data_.data(), proprio_env_data_.size(), shape_proprio_env_.data(), 2));
-        input_tensors.emplace_back(Ort::Value::CreateTensor<float>(memory_info, estimator_history_data_.data(), estimator_history_data_.size(), shape_estimator_.data(), 2));
+        
+
+        // input_tensors.emplace_back(Ort::Value::CreateTensor<float>(memory_info, estimator_history_data_.data(), estimator_history_data_.size(), shape_estimator_.data(), 2));
+        
         input_tensors.emplace_back(Ort::Value::CreateTensor<float>(memory_info, hidden_state_data_.data(), hidden_state_data_.size(), shape_h0_.data(), 3));
 
-        // 如果你的 ONNX 输出名字不同，这里会报错，请留意并修改 output_names_ 数组
-        auto outputs = session_->Run(Ort::RunOptions{nullptr}, input_names_, input_tensors.data(), 3, output_names_, 2);
+        // 输入数量从 3 改成 2
+        auto outputs = session_->Run(Ort::RunOptions{nullptr}, input_names_, input_tensors.data(), 2, output_names_, 2);
 
         // ====== 5. 提取 Action 和更新 Hidden State ======
         current_action_eigen = Eigen::Map<Eigen::VectorXf>(outputs[0].GetTensorMutableData<float>(), action_dim);
