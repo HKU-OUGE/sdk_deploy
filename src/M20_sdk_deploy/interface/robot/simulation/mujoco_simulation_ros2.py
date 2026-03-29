@@ -291,6 +291,7 @@ class MuJoCoSimulationNode(Node):
             1,          # flg_static
             body_id,    # bodyexclude
             geomid, dist,
+            None,
             self.num_rays,
             10.0        # cutoff (最大量程 10 米)
         )
@@ -332,6 +333,7 @@ class MuJoCoSimulationNode(Node):
                 self.geomgroup,
                 1, base_id,
                 geomid, dist,
+                None,
                 self.num_rays, 10.0
             )
             
