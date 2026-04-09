@@ -26,7 +26,7 @@ endif()
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(drdds REQUIRED)
-
+find_package(sensor_msgs REQUIRED)
 # ================= 新增：高程图(感知)相关依赖 =================
 find_package(grid_map_msgs REQUIRED)
 find_package(tf2_ros REQUIRED)
@@ -65,6 +65,25 @@ file(GLOB_RECURSE STATE_MACHINE_SRC "state_machine/*.c*")
 
 add_executable(rl_deploy main.cpp ${STATE_MACHINE_SRC})
 
+# ================= 新增：编译 Lidar Relay 节点 =================
+add_executable(lidar_relay src/lidar_relay.cpp)
+ament_target_dependencies(lidar_relay
+        rclcpp
+        sensor_msgs
+)
+# ==============================================================
+
+add_executable(test_logbag src/test_logbag.cpp)
+ament_target_dependencies(test_logbag
+        rclcpp
+        drdds
+        grid_map_msgs
+        grid_map_ros
+        tf2_ros
+        tf2_geometry_msgs
+)
+# ==============================================================
+
 add_library(onnxruntime SHARED IMPORTED)
 set_target_properties(onnxruntime PROPERTIES IMPORTED_LOCATION "${THIRD_PARTY}/onnxruntime//${BUILD_PLATFORM}/lib/libonnxruntime.so")
 
@@ -101,8 +120,23 @@ else()
   )
 endif()
 
-install(TARGETS rl_deploy
+# 给 test_logbag 链接所需库
+target_link_libraries(test_logbag
+        interface
+        onnxruntime
+        -lpthread
+        -lm
+        -lrt
+        -ldl
+        -lstdc++
+)
+
+install(TARGETS rl_deploy lidar_relay test_logbag
         DESTINATION lib/${PROJECT_NAME}
+)
+# 安装 launch 文件夹
+install(DIRECTORY launch
+        DESTINATION share/${PROJECT_NAME}
 )
 
 ament_package()

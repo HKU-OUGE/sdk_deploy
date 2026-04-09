@@ -10,7 +10,7 @@
 
   <depend>rclcpp</depend>
   <depend>drdds</depend>
-
+  <depend>sensor_msgs</depend>
   <depend>grid_map_msgs</depend>
   <depend>grid_map_ros</depend>
   <depend>tf2_ros</depend>

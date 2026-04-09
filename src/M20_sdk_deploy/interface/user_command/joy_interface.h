@@ -59,9 +59,9 @@ private:
     const int RAW_BTN_X = 2;
     const int RAW_BTN_Y = 3;
 
-    float max_forward_ = 0.5f;
-    float max_side_    = 1.0f;
-    float max_yaw_     = 1.0f;
+    float max_forward_ = 1.5f;
+    float max_side_    = 0.0f;
+    float max_yaw_     = 1.5f;
 
     float normalize_axis(int val) {
         const int deadzone = 4000;

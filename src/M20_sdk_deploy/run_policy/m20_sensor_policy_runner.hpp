@@ -4,6 +4,7 @@
 #include <onnxruntime_cxx_api.h>
 #include <rclcpp/rclcpp.hpp>
 #include <grid_map_msgs/msg/grid_map.hpp>
+#include <sensor_msgs/msg/point_cloud2.hpp>
 #include <tf2_ros/transform_listener.h>
 #include <tf2_ros/buffer.h>
 #include <tf2/LinearMath/Quaternion.h>
@@ -22,26 +23,25 @@ private:
     const int motor_num = 16, action_dim = 16;
     float omega_scale_ = 0.25, dof_vel_scale_ = 0.05;
 
-    // 网络维度定义 (严格对齐导出日志)
     const int proprio_dim_ = 57;
     const int elevation_dim_ = 187;
-    const int proprio_env_dim_ = 244;  // 57 + 187
+    const int scan_dim_ = 252; 
+    const int proprio_env_dim_ = 496;  
+    
     const int history_len_ = 15;
-    const int estimator_dim_ = 855;    // 57 * 15
-    const int hidden_dim_ = 256;       // 假设 GRU 隐藏层为 256
+    const int estimator_dim_ = 855;    
+    const int hidden_dim_ = 256;       
 
-    // ONNX 输入输出张量
     std::vector<float> proprio_env_data_;
     std::vector<float> estimator_history_data_;
     std::vector<float> hidden_state_data_;
 
-    // 输入历史队列
     std::deque<std::vector<float>> history_buffer_;
     bool is_first_step_ = true;
-    // 输入张量 Shape
+    
     std::array<int64_t, 2> shape_proprio_env_ = {1, proprio_env_dim_};
     std::array<int64_t, 2> shape_estimator_   = {1, estimator_dim_};
-    std::array<int64_t, 3> shape_h0_          = {1, 1, hidden_dim_}; // PyTorch GRU 默认要求 3D shape
+    std::array<int64_t, 3> shape_h0_          = {1, 1, hidden_dim_}; 
 
     VecXf joint_pos_rl = VecXf(action_dim), joint_vel_rl = VecXf(action_dim);
     VecXf current_action_eigen, last_action_eigen, tmp_action_eigen;
@@ -64,48 +64,53 @@ private:
     std::vector<float> action_scale_robot = {0.125, 0.25, 0.25, 5, 0.125, 0.25, 0.25, 5, 0.125, 0.25, 0.25, 5, 0.125, 0.25, 0.25, 5};
     std::vector<int> robot2policy_idx, policy2robot_idx;
 
-    // ONNX 核心
     Ort::SessionOptions session_options_;
     Ort::Env env_;
     std::unique_ptr<Ort::Session> session_;
     Ort::MemoryInfo memory_info{nullptr};
 
-    // const char* input_names_[3] = {"proprio_and_env", "estimator_history", "h0"};
-    const char* input_names_[2] = {"proprio_and_env", "h0"};
+    const char* input_names_[3] = {"proprio_and_env", "estimator_history", "h0"};
     const char* output_names_[2] = {"action", "next_h0"};
 
-    // ROS 2 高程图相关
     rclcpp::Node::SharedPtr ros_node_;
     rclcpp::Subscription<grid_map_msgs::msg::GridMap>::SharedPtr grid_map_sub_;
+    rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr lidar_sub_;
     std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
     std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
     std::thread ros_spin_thread_;
+    
     std::mutex map_mutex_;
     grid_map_msgs::msg::GridMap latest_map_;
     bool map_received_ = false;
 
+    std::mutex scan_mutex_;
+    std::vector<float> fwd_scan_bins_;
+    std::vector<float> bwd_scan_bins_;
+    bool scan_received_ = false;
+    bool is_offline_test_ = false;
+
 public:
-    M20SensorPolicyRunner(const std::string &policy_name, const std::string &policy_path) :
+    M20SensorPolicyRunner(const std::string &policy_name, const std::string &policy_path, bool is_offline_test = false) :
             PolicyRunnerBase(policy_name), env_(ORT_LOGGING_LEVEL_WARNING, "M20SensorPolicyRunner"),
-            memory_info(Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault)) {
+            memory_info(Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault)),
+            is_offline_test_(is_offline_test) {
 
         SetDecimation(4);
         session_options_.SetIntraOpNumThreads(1);
         session_options_.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_EXTENDED);
         session_ = std::make_unique<Ort::Session>(env_, policy_path.c_str(), session_options_);
 
-        std::cout << "[M20SensorPolicyRunner] Loaded Unified MoE Policy successfully." << std::endl;
-
-        // 初始化数据容器
         proprio_env_data_.resize(proprio_env_dim_, 0.0f);
         estimator_history_data_.resize(estimator_dim_, 0.0f);
         hidden_state_data_.resize(hidden_dim_, 0.0f);
+        
+        fwd_scan_bins_.resize(126, 5.0f); 
+        bwd_scan_bins_.resize(126, 5.0f);
 
         for (int i = 0; i < history_len_; ++i) {
             history_buffer_.push_back(std::vector<float>(proprio_dim_, 0.0f));
         }
 
-        // 初始化增益与位姿
         kp_ = Vec4f(80, 80, 80, 0.).replicate(4, 1);
         kd_ = Vec4f(2, 2, 2, 0.6).replicate(4, 1);
         robot_action.kp = kp_; robot_action.kd = kd_;
@@ -123,26 +128,115 @@ public:
         dof_default_eigen_robot << 0,-0.6,1,0, 0,-0.6,1,0, 0,0.6,-1,0, 0,0.6,-1,0;
         last_action_eigen.setZero(16); tmp_action_eigen.setZero(16); current_action_eigen.setZero(16);
 
-        // ================= ROS 2 节点与订阅 =================
-        ros_node_ = rclcpp::Node::make_shared("m20_elevation_subscriber");
+        if (!is_offline_test_) {
+            ros_node_ = rclcpp::Node::make_shared("m20_elevation_subscriber");
+            tf_buffer_ = std::make_shared<tf2_ros::Buffer>(ros_node_->get_clock());
+            tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
 
-        tf_buffer_ = std::make_shared<tf2_ros::Buffer>(ros_node_->get_clock());
-        tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
+            grid_map_sub_ = ros_node_->create_subscription<grid_map_msgs::msg::GridMap>(
+                "/elevation_mapping_node/elevation_map_raw", rclcpp::SensorDataQoS(),
+                [this](const grid_map_msgs::msg::GridMap::SharedPtr msg) {
+                    std::lock_guard<std::mutex> lock(map_mutex_);
+                    latest_map_ = *msg;
+                    map_received_ = true;
+                });
 
-        grid_map_sub_ = ros_node_->create_subscription<grid_map_msgs::msg::GridMap>(
-            "/elevation_mapping_node/elevation_map_raw", rclcpp::SensorDataQoS(),
-            [this](const grid_map_msgs::msg::GridMap::SharedPtr msg) {
-                std::lock_guard<std::mutex> lock(map_mutex_);
-                latest_map_ = *msg;
-                map_received_ = true;
-            });
 
-        ros_spin_thread_ = std::thread([this]() { rclcpp::spin(ros_node_); });
+            lidar_sub_ = ros_node_->create_subscription<sensor_msgs::msg::PointCloud2>(
+                "/LIDAR_POINT_CLOUD_MERGED", rclcpp::SensorDataQoS(),
+                [this](const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
+                    std::vector<float> local_fwd_bins(126, 5.0f);
+                    std::vector<float> local_bwd_bins(126, 5.0f);
+                    
+                    int x_offset_idx = -1, y_offset_idx = -1, z_offset_idx = -1;
+                    for (const auto& field : msg->fields) {
+                        if (field.name == "x") x_offset_idx = field.offset;
+                        if (field.name == "y") y_offset_idx = field.offset;
+                        if (field.name == "z") z_offset_idx = field.offset;
+                    }
+                    if (x_offset_idx == -1 || y_offset_idx == -1 || z_offset_idx == -1) return;
+
+                    const float target_angles[6] = {-25.0f, -15.0f, -5.0f, 5.0f, 15.0f, 25.0f};
+                    const float angle_tol = 4.0f; // 角度容差 (度)
+                    const float dy_step = 0.05f;
+                    const float y_min = -0.5f;
+                    const int num_rays = 21;
+                    
+                    // 对齐 env_cfg.py 中的位置偏移
+                    const float fwd_x_offset = 0.32028f;
+                    const float bwd_x_offset = -0.32028f;
+                    const float z_offset = -0.013f;
+
+                    for (size_t i = 0; i < msg->data.size(); i += msg->point_step) {
+                        float x, y, z;
+                        memcpy(&x, &msg->data[i + x_offset_idx], sizeof(float));
+                        memcpy(&y, &msg->data[i + y_offset_idx], sizeof(float));
+                        memcpy(&z, &msg->data[i + z_offset_idx], sizeof(float));
+
+                        if (std::isnan(x) || std::isnan(y) || std::isnan(z)) continue;
+
+                        // 1. 检查是否属于前向 Lidar
+                        float fwd_dx = x - fwd_x_offset;
+                        float fwd_dy = y;
+                        float fwd_dz = z - z_offset;
+
+                        if (fwd_dx > 0.0f && fwd_dy >= y_min - dy_step/2.0f && fwd_dy <= -y_min + dy_step/2.0f) {
+                            // 计算真实的俯仰角 (Pitch Angle)
+                            float angle_deg = std::atan2(-fwd_dz, fwd_dx) * 180.0f / M_PI;
+                            
+                            for (int l = 0; l < 6; ++l) {
+                                if (std::abs(angle_deg - target_angles[l]) <= angle_tol) {
+                                    int bin = std::round((fwd_dy - y_min) / dy_step);
+                                    if (bin >= 0 && bin < num_rays) {
+                                        // 必须使用 3D 空间真实距离！
+                                        float r = std::sqrt(fwd_dx*fwd_dx + fwd_dy*fwd_dy + fwd_dz*fwd_dz);
+                                        if (r < local_fwd_bins[l * num_rays + bin]) {
+                                            local_fwd_bins[l * num_rays + bin] = r;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // 2. 检查是否属于后向 Lidar
+                        float bwd_dx = x - bwd_x_offset;
+                        float bwd_dy = y;
+                        float bwd_dz = z - z_offset;
+
+                        if (bwd_dx < 0.0f && bwd_dy >= y_min - dy_step/2.0f && bwd_dy <= -y_min + dy_step/2.0f) {
+                            // 由于向后看，-dx 才是前向投影
+                            float angle_deg = std::atan2(-bwd_dz, -bwd_dx) * 180.0f / M_PI;
+                            
+                            for (int l = 0; l < 6; ++l) {
+                                if (std::abs(angle_deg - target_angles[l]) <= angle_tol) {
+                                    // 遵循原有的 (-y) 映射逻辑保证左右一致性
+                                    int bin = std::round((-bwd_dy - y_min) / dy_step);
+                                    if (bin >= 0 && bin < num_rays) {
+                                        float r = std::sqrt(bwd_dx*bwd_dx + bwd_dy*bwd_dy + bwd_dz*bwd_dz);
+                                        if (r < local_bwd_bins[l * num_rays + bin]) {
+                                            local_bwd_bins[l * num_rays + bin] = r;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    std::lock_guard<std::mutex> lock(scan_mutex_);
+                    fwd_scan_bins_ = local_fwd_bins;
+                    bwd_scan_bins_ = local_bwd_bins;
+                    scan_received_ = true;
+                });
+
+            ros_spin_thread_ = std::thread([this]() { rclcpp::spin(ros_node_); });
+        }
     }
 
     ~M20SensorPolicyRunner() {
-        rclcpp::shutdown();
-        if (ros_spin_thread_.joinable()) ros_spin_thread_.join();
+        if (!is_offline_test_) {
+            rclcpp::shutdown();
+            if (ros_spin_thread_.joinable()) ros_spin_thread_.join();
+        }
     }
 
     void OnEnter(const RobotBasicState &rbs) override {
@@ -151,43 +245,118 @@ public:
         is_first_step_ = true;
     }
 
-
-RobotAction getRobotAction(const RobotBasicState &ro, const UserCommand &uc) override {
-        Vec3f base_omega = ro.base_omega * omega_scale_;
-        Vec3f projected_gravity = ro.base_rot_mat.inverse() * gravity_direction;
-        Vec3f command = Vec3f(uc.forward_vel_scale, uc.side_vel_scale, uc.turnning_vel_scale);
-
-        for (int i = 0; i < action_dim; ++i) {
-            joint_pos_rl(i) = ro.joint_pos(policy2robot_idx[i]);
-            joint_vel_rl(i) = ro.joint_vel(policy2robot_idx[i]) * dof_vel_scale_;
-        }
-        joint_pos_rl.segment(12, 4).setZero();
-        joint_pos_rl -= dof_default_eigen_policy;
-
-        // ====== 1. 组装 57 维的 Proprio 本体感知 ======
-        std::vector<float> curr_proprio(proprio_dim_);
-        Eigen::Map<Eigen::VectorXf>(curr_proprio.data(), proprio_dim_) << base_omega, projected_gravity, command, joint_pos_rl, joint_vel_rl, last_action_eigen;
+    VecXf processAndInfer(
+        const std::vector<float>& curr_proprio,
+        const std::vector<float>& heights_187,
+        const std::vector<float>& fwd_scan_126,
+        const std::vector<float>& bwd_scan_126) 
+    {
         std::copy(curr_proprio.begin(), curr_proprio.end(), proprio_env_data_.begin());
 
-        // ====== 2. 更新并组装 Estimator History (855 维) ======
         if (is_first_step_) {
             for (auto& frame : history_buffer_) {
                 std::copy(curr_proprio.begin(), curr_proprio.end(), frame.begin());
             }
             is_first_step_ = false;
         } else {
-            history_buffer_.pop_back();
-            history_buffer_.push_front(curr_proprio); 
+            history_buffer_.pop_front();
+            history_buffer_.push_back(curr_proprio);
         }
 
-        // 从最老 (t-14) 到最新 (t)，严格对齐 IsaacLab 的 shifts=-1
-        int offset = 0;
-        for (int i = history_len_ - 1; i >= 0; --i) {
-            std::copy(history_buffer_[i].begin(), history_buffer_[i].end(), estimator_history_data_.begin() + offset);
-            offset += proprio_dim_;
+        std::vector<int> term_dims = {3, 3, 3, 16, 16, 16}; 
+        int offset = 0;             
+        int feature_start_idx = 0;  
+
+        for (int dim : term_dims) {
+            for (int t = 0; t < history_len_; ++t) {
+                for (int i = 0; i < dim; ++i) {
+                    estimator_history_data_[offset++] = history_buffer_[t][feature_start_idx + i];
+                }
+            }
+            feature_start_idx += dim;
         }
 
-        // ====== 3. 采样 187 维高程网格 ======
+        int env_idx = proprio_dim_;
+        std::copy(heights_187.begin(), heights_187.end(), proprio_env_data_.begin() + env_idx);
+        env_idx += 187;
+
+        auto map_scan_fn = [](float d) {
+            if (d < 0.2f) return -1.0f;
+            return std::clamp(d / 5.0f, 0.0f, 1.0f);
+        };
+
+        for (int i = 0; i < 126; ++i) proprio_env_data_[env_idx++] = map_scan_fn(fwd_scan_126[i]);
+        for (int i = 0; i < 126; ++i) proprio_env_data_[env_idx++] = map_scan_fn(bwd_scan_126[i]);
+
+        std::vector<Ort::Value> input_tensors;
+        input_tensors.emplace_back(Ort::Value::CreateTensor<float>(memory_info, proprio_env_data_.data(), proprio_env_data_.size(), shape_proprio_env_.data(), 2));
+        input_tensors.emplace_back(Ort::Value::CreateTensor<float>(memory_info, estimator_history_data_.data(), estimator_history_data_.size(), shape_estimator_.data(), 2));
+        input_tensors.emplace_back(Ort::Value::CreateTensor<float>(memory_info, hidden_state_data_.data(), hidden_state_data_.size(), shape_h0_.data(), 3));
+
+        auto outputs = session_->Run(Ort::RunOptions{nullptr}, input_names_, input_tensors.data(), 3, output_names_, 2);
+
+        current_action_eigen = Eigen::Map<Eigen::VectorXf>(outputs[0].GetTensorMutableData<float>(), action_dim);
+        std::memcpy(hidden_state_data_.data(), outputs[1].GetTensorMutableData<float>(), hidden_dim_ * sizeof(float));
+
+        last_action_eigen = current_action_eigen;
+        return current_action_eigen;
+    }
+
+    VecXf testOfflineStep(
+        const std::vector<float>& omega, const std::vector<float>& proj_g, const std::vector<float>& cmd,
+        const std::vector<float>& jp, const std::vector<float>& jv, const std::vector<float>& last_act,
+        const std::vector<float>& raw_heights, const std::vector<float>& raw_fwd, const std::vector<float>& raw_bwd) 
+    {
+        std::vector<float> curr_proprio(proprio_dim_, 0.0f);
+        
+        int idx = 0;
+        for (int i=0; i<3; ++i) curr_proprio[idx++] = std::clamp(static_cast<float>(omega[i] * omega_scale_), -100.0f, 100.0f);
+        for (int i=0; i<3; ++i) curr_proprio[idx++] = std::clamp(static_cast<float>(proj_g[i] * 1.0f), -100.0f, 100.0f);
+        for (int i=0; i<3; ++i) curr_proprio[idx++] = std::clamp(static_cast<float>(cmd[i] * 1.0f), -100.0f, 100.0f);
+        
+        for (int i=0; i<action_dim; ++i) {
+            float rel_pos = jp[policy2robot_idx[i]] - dof_default_eigen_policy(i);
+            if (i >= 12) rel_pos = 0.0f;
+            curr_proprio[idx++] = std::clamp(rel_pos * 1.0f, -100.0f, 100.0f); 
+        }
+
+        for (int i=0; i<action_dim; ++i) {
+            curr_proprio[idx++] = std::clamp(static_cast<float>(jv[policy2robot_idx[i]] * dof_vel_scale_), -100.0f, 100.0f);
+        }
+        
+        for (int i=0; i<action_dim; ++i) {
+            curr_proprio[idx++] = std::clamp(last_act[i], -100.0f, 100.0f); 
+        }
+
+        return processAndInfer(curr_proprio, raw_heights, raw_fwd, raw_bwd);
+    }
+
+    RobotAction getRobotAction(const RobotBasicState &ro, const UserCommand &uc) override {
+        Vec3f base_omega = ro.base_omega * omega_scale_;
+        Vec3f projected_gravity = ro.base_rot_mat.inverse() * gravity_direction;
+        Vec3f command = Vec3f(uc.forward_vel_scale, uc.side_vel_scale, uc.turnning_vel_scale);
+
+        std::vector<float> curr_proprio(proprio_dim_, 0.0f);
+        int idx = 0;
+        for (int i=0; i<3; ++i) curr_proprio[idx++] = std::clamp(base_omega(i), -100.0f, 100.0f);
+        for (int i=0; i<3; ++i) curr_proprio[idx++] = std::clamp(projected_gravity(i), -100.0f, 100.0f);
+        for (int i=0; i<3; ++i) curr_proprio[idx++] = std::clamp(command(i), -100.0f, 100.0f);
+
+        for (int i = 0; i < action_dim; ++i) {
+            float rel_pos = ro.joint_pos(policy2robot_idx[i]) - dof_default_eigen_policy(i);
+            if (i >= 12) rel_pos = 0.0f;
+            curr_proprio[idx++] = std::clamp(rel_pos * 1.0f, -100.0f, 100.0f);
+        }
+
+        for (int i = 0; i < action_dim; ++i) {
+            curr_proprio[idx++] = std::clamp(static_cast<float>(ro.joint_vel(policy2robot_idx[i]) * dof_vel_scale_), -100.0f, 100.0f);
+        }
+
+        for (int i = 0; i < action_dim; ++i) {
+            curr_proprio[idx++] = std::clamp(last_action_eigen[i], -100.0f, 100.0f);
+        }
+
+        std::vector<float> curr_heights(187, -1.0f);
         float robot_x = 0, robot_y = 0, robot_z = 0.45f, robot_yaw = 0;
         try {
             geometry_msgs::msg::TransformStamped t = tf_buffer_->lookupTransform("odom", "base_link", tf2::TimePointZero);
@@ -195,12 +364,7 @@ RobotAction getRobotAction(const RobotBasicState &ro, const UserCommand &uc) ove
             tf2::Quaternion q(t.transform.rotation.x, t.transform.rotation.y, t.transform.rotation.z, t.transform.rotation.w);
             tf2::Matrix3x3 m(q); double roll, pitch, yaw; m.getRPY(roll, pitch, yaw);
             robot_yaw = yaw;
-        } catch (const tf2::TransformException & ex) {
-            // 获取不到 TF 时，默认高度保持 0.45f
-        }
-
-
-        float default_relative_height = -1.0f;
+        } catch (const tf2::TransformException & ex) { }
 
         grid_map_msgs::msg::GridMap local_map_msg;
         bool has_map = false;
@@ -218,47 +382,36 @@ RobotAction getRobotAction(const RobotBasicState &ro, const UserCommand &uc) ove
             map_converted = grid_map::GridMapRosConverter::fromMessage(local_map_msg, local_grid_map);
         }
 
-        int env_idx = proprio_dim_;
+        int env_idx = 0;
         for (float dy = -0.5f; dy <= 0.5f + 1e-5; dy += 0.1f) {
             for (float dx = -0.8f; dx <= 0.8f + 1e-5; dx += 0.1f) {
-                if (env_idx < proprio_env_dim_) {
-                    float relative_height = default_relative_height; 
-                    
-                    if (map_converted && local_grid_map.exists("elevation")) {
-                        float query_x = robot_x + (dx * std::cos(robot_yaw) - dy * std::sin(robot_yaw));
-                        float query_y = robot_y + (dx * std::sin(robot_yaw) + dy * std::cos(robot_yaw));
-                        
-                        grid_map::Position pos(query_x, query_y);
-                        if (local_grid_map.isInside(pos)) {
-                            float h = local_grid_map.atPosition("elevation", pos);
-                            if (!std::isnan(h)) {
-                                // 【修正 2】：严格对齐 IsaacLab 的公式 (h - robot_z + 0.5f)
-                                relative_height = std::clamp(h - robot_z + 0.5f, -1.0f, 1.0f);
-                            }
+                if (map_converted && local_grid_map.exists("elevation")) {
+                    float query_x = robot_x + (dx * std::cos(robot_yaw) - dy * std::sin(robot_yaw));
+                    float query_y = robot_y + (dx * std::sin(robot_yaw) + dy * std::cos(robot_yaw));
+                    grid_map::Position pos(query_x, query_y);
+                    if (local_grid_map.isInside(pos)) {
+                        float h = local_grid_map.atPosition("elevation", pos);
+                        if (!std::isnan(h)) {
+
+                            curr_heights[env_idx] = std::clamp(robot_z - h - 0.5f, -1.0f, 1.0f);
                         }
                     }
-                    proprio_env_data_[env_idx++] = relative_height;
                 }
+                env_idx++;
             }
         }
 
-        // ====== 4. 执行 ONNX 多张量推理 ======
-        std::vector<Ort::Value> input_tensors;
-        input_tensors.emplace_back(Ort::Value::CreateTensor<float>(memory_info, proprio_env_data_.data(), proprio_env_data_.size(), shape_proprio_env_.data(), 2));
-        
+        std::vector<float> curr_fwd_bins(126, 5.0f);
+        std::vector<float> curr_bwd_bins(126, 5.0f);
+        {
+            std::lock_guard<std::mutex> lock(scan_mutex_);
+            if (scan_received_) {
+                curr_fwd_bins = fwd_scan_bins_;
+                curr_bwd_bins = bwd_scan_bins_;
+            }
+        }
 
-        // input_tensors.emplace_back(Ort::Value::CreateTensor<float>(memory_info, estimator_history_data_.data(), estimator_history_data_.size(), shape_estimator_.data(), 2));
-        
-        input_tensors.emplace_back(Ort::Value::CreateTensor<float>(memory_info, hidden_state_data_.data(), hidden_state_data_.size(), shape_h0_.data(), 3));
-
-        // 输入数量从 3 改成 2
-        auto outputs = session_->Run(Ort::RunOptions{nullptr}, input_names_, input_tensors.data(), 2, output_names_, 2);
-
-        // ====== 5. 提取 Action 和更新 Hidden State ======
-        current_action_eigen = Eigen::Map<Eigen::VectorXf>(outputs[0].GetTensorMutableData<float>(), action_dim);
-        std::memcpy(hidden_state_data_.data(), outputs[1].GetTensorMutableData<float>(), hidden_dim_ * sizeof(float));
-
-        last_action_eigen = current_action_eigen;
+        processAndInfer(curr_proprio, curr_heights, curr_fwd_bins, curr_bwd_bins);
 
         for (int i = 0; i < action_dim; ++i) {
             tmp_action_eigen(i) = current_action_eigen(robot2policy_idx[i]) * action_scale_robot[i];
