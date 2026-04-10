@@ -134,7 +134,7 @@ public:
             tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
 
             grid_map_sub_ = ros_node_->create_subscription<grid_map_msgs::msg::GridMap>(
-                "/elevation_mapping_node/elevation_map_raw", rclcpp::SensorDataQoS(),
+            "/m20_deploy/elevation_map_udp", rclcpp::SensorDataQoS(),
                 [this](const grid_map_msgs::msg::GridMap::SharedPtr msg) {
                     std::lock_guard<std::mutex> lock(map_mutex_);
                     latest_map_ = *msg;
@@ -143,7 +143,7 @@ public:
 
 
             lidar_sub_ = ros_node_->create_subscription<sensor_msgs::msg::PointCloud2>(
-                "/LIDAR_POINT_CLOUD_MERGED", rclcpp::SensorDataQoS(),
+    "/LIDAR_SIM_RAW", rclcpp::SensorDataQoS(),
                 [this](const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
                     std::vector<float> local_fwd_bins(126, 5.0f);
                     std::vector<float> local_bwd_bins(126, 5.0f);

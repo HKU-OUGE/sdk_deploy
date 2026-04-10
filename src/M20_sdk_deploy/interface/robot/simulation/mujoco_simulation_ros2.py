@@ -141,15 +141,16 @@ class MuJoCoSimulationNode(Node):
         self.imu_pub = self.create_publisher(ImuData, '/IMU_DATA', 200)
         self.joints_pub = self.create_publisher(JointsData, '/JOINTS_DATA', 200)
         self.cmd_sub = self.create_subscription(JointsDataCmd, '/JOINTS_CMD', self._cmd_callback, 50)
-        
+
         # ================= [修复2] 使用 Reliable QoS =================
-        # 强制使用深度队列的 Reliable QoS，匹配建图节点
-        self.lidar_pub = self.create_publisher(PointCloud2, '/LIDAR_POINT_CLOUD_MERGED', 10)
+        # 将原本的 '/LIDAR_POINT_CLOUD_MERGED' 改为 '/LIDAR_SIM_RAW'
+        # 这样能强制让高程图和 lidar_to_scan 只能去吃 Node B 吐出来的数据
+        self.lidar_pub = self.create_publisher(PointCloud2, '/LIDAR_SIM_RAW', 10)
         # =============================================================
         self.elevation_sub = self.create_subscription(
-            GridMap, 
-            '/elevation_mapping_node/elevation_map_raw', 
-            self._grid_map_callback, 
+            GridMap,
+            '/m20_deploy/elevation_map_udp',
+            self._grid_map_callback,
             10)
         self.elevation_pts = np.empty((0, 3))
         self.world_lidar_pts = np.empty((0, 3)) 
