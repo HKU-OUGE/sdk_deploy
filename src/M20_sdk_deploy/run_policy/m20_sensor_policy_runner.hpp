@@ -241,8 +241,24 @@ public:
 
     void OnEnter(const RobotBasicState &rbs) override {
         std::fill(hidden_state_data_.begin(), hidden_state_data_.end(), 0.0f);
-        last_action_eigen.setZero(16);
+        
+        // 【修复1：根据当前真实的物理关节位置反推 last_action_eigen】
+        for (int i = 0; i < action_dim; ++i) {
+            int policy_idx = robot2policy_idx[i];
+            float current_pos = rbs.joint_pos(i);
+            float default_pos = dof_default_eigen_robot(i);
+            float scale = action_scale_robot[i];
+            
+            // 如果是轮子关节(无绝对位置)，将 action 设为 0
+            if (policy_idx >= 12) {
+                last_action_eigen(policy_idx) = 0.0f;
+            } else {
+                last_action_eigen(policy_idx) = (current_pos - default_pos) / scale;
+            }
+        }
+
         is_first_step_ = true;
+        run_cnt_ = 0; // 重置父类的步数计数器，用于后续的动作平滑
     }
 
     VecXf processAndInfer(
@@ -254,8 +270,18 @@ public:
         std::copy(curr_proprio.begin(), curr_proprio.end(), proprio_env_data_.begin());
 
         if (is_first_step_) {
+            // 【修复2：填充历史 Buffer 时，抹除速度信息，避免物理矛盾】
+            std::vector<float> static_proprio = curr_proprio;
+            
+            // base_omega 在 curr_proprio 的索引是 0, 1, 2
+            for (int i = 0; i < 3; ++i) static_proprio[i] = 0.0f; 
+            
+            // joint_vel 在 curr_proprio 的索引是 25 到 40
+            // (3+3+3+16=25 起始)
+            for (int i = 25; i < 41; ++i) static_proprio[i] = 0.0f; 
+            
             for (auto& frame : history_buffer_) {
-                std::copy(curr_proprio.begin(), curr_proprio.end(), frame.begin());
+                std::copy(static_proprio.begin(), static_proprio.end(), frame.begin());
             }
             is_first_step_ = false;
         } else {
@@ -411,6 +437,7 @@ public:
             }
         }
 
+
         processAndInfer(curr_proprio, curr_heights, curr_fwd_bins, curr_bwd_bins);
 
         for (int i = 0; i < action_dim; ++i) {
@@ -418,6 +445,36 @@ public:
         }
         tmp_action_eigen += dof_default_eigen_robot;
 
+        // 【优化1：将平滑步数延长到 30 步 (约0.6秒)，让 RNN 有更充足的收敛时间】
+        int smooth_steps = 30; 
+        if (run_cnt_ < smooth_steps) {
+            float alpha = static_cast<float>(run_cnt_ + 1) / smooth_steps; // 从 1/30 渐变到 1.0
+            
+            // 1. 动作平滑插值
+            for (int i = 0; i < action_dim; ++i) {
+                // 此时 i 是机器人的物理关节索引，屏蔽轮子 (3, 7, 11, 15)
+                if (i % 4 != 3) {
+                    float actual_pos = ro.joint_pos(i);
+                    tmp_action_eigen(i) = (1.0f - alpha) * actual_pos + alpha * tmp_action_eigen(i);
+                }
+            }
+
+            // 【核心修复2：闭环 last_action_eigen ！】
+            // 注意！这段代码现在移到了 if 内部！
+            // 只有在平滑干预期间，我们才需要把被修改过的动作反推给网络。
+            // 平滑期结束后，保留 processAndInfer 原生赋予的 last_action_eigen 即可。
+            for (int i = 0; i < action_dim; ++i) {
+                int policy_idx = robot2policy_idx[i];
+                if (policy_idx >= 12) {
+                    last_action_eigen(policy_idx) = 0.0f; // 轮子在冷启动期不记录历史
+                } else {
+                    last_action_eigen(policy_idx) = (tmp_action_eigen(i) - dof_default_eigen_robot(i)) / action_scale_robot[i];
+                }
+            }
+        }
+        run_cnt_++; // 更新步数
+
+        // 装载动作发给底层控制
         for (int i = 0; i < 4; ++i){
             robot_action.goal_joint_pos.segment(i*4, 3) = tmp_action_eigen.segment(i*4, 3);
             robot_action.goal_joint_vel(i*4+3) = tmp_action_eigen(i*4+3);

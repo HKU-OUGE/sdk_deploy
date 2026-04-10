@@ -54,8 +54,6 @@ namespace qw {
                     timespec start_timestamp, end_timestamp;
                     clock_gettime(CLOCK_MONOTONIC, &start_timestamp);
 
-                    // [修改 3] 因为提取高程网格和历史队列都在 M20SensorPolicyRunner 内部封装好了
-                    // 所以这里代码极为清爽，依然只需要这一句调用！
                     auto ra = policy_ptr_->getRobotAction(rbs_, *(uc_ptr_->GetUserCommand()));
 
                     MatXf res = ra.ConvertToMat();
@@ -74,7 +72,7 @@ namespace qw {
     public:
         RLSensorControlState(const RobotName &robot_name, const std::string &state_name,
                        std::shared_ptr<ControllerData> data_ptr) : StateBase(robot_name, state_name, data_ptr) {
-            std::memset(&rbs_, 0, sizeof(rbs_));
+            // std::memset(&rbs_, 0, sizeof(rbs_));
 
             if (robot_name_ == RobotName::M20) {
                 namespace fs = std::filesystem;
@@ -100,8 +98,13 @@ namespace qw {
             state_run_cnt_ = -1;
             start_flag_ = true;
 
-            run_policy_thread_ = std::thread(std::bind(&RLSensorControlState::PolicyRunner, this));
+
+            UpdateRobotObservation();
+
+            // 现在将真实状态传入，网络就可以安全地反推 last_action 了
             policy_ptr_->OnEnter(rbs_);
+
+            run_policy_thread_ = std::thread(std::bind(&RLSensorControlState::PolicyRunner, this));
 
             StateBase::msfb_.UpdateCurrentState(RobotMotionState::RLSensorControlMode);
         };
