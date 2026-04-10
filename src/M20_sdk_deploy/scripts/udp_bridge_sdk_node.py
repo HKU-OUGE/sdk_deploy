@@ -2,36 +2,44 @@
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import PointCloud2
+from grid_map_msgs.msg import GridMap
 import sensor_msgs_py.point_cloud2 as pc2
+from rclpy.serialization import deserialize_message
+import tf2_ros
 import socket
 import numpy as np
 import threading
 import time
-from grid_map_msgs.msg import GridMap
-from rclpy.serialization import deserialize_message
+import struct
 
 class UdpBridgeANode(Node):
     def __init__(self):
         super().__init__('udp_bridge_a_node')
 
-        self.B_IP_PORT = ("127.0.0.1", 5001)
+        # --- 请替换为电脑 B 的真实 IP ---
+        self.B_IP_PORT = ("192.168.8.109", 5001)
+        # self.B_IP_PORT = ("127.0.0.1", 5001)
         self.LOCAL_PORT = 5002
 
         self.sock_send = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock_recv = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock_recv.bind(("0.0.0.0", self.LOCAL_PORT))
 
+        # 监听本地仿真器发布的 TF 树
+        self.tf_buffer = tf2_ros.Buffer()
+        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
+
         self.lidar_sub = self.create_subscription(
             PointCloud2, '/LIDAR_SIM_RAW', self.lidar_callback, 10)
-        # 新增：发布还原后的高程图给 C++ 控制器
+
+        # 专属隔离话题，供 C++ 和仿真器订阅
         self.map_pub = self.create_publisher(
-            GridMap,
-            '/m20_deploy/elevation_map_udp',
-            10)
+            GridMap, '/m20_deploy/elevation_map_udp', 10)
+
         self.recv_thread = threading.Thread(target=self.udp_receive_loop, daemon=True)
         self.recv_thread.start()
 
-        self.get_logger().info("Node A started. Streaming Lidar chunks and waiting for Map...")
+        self.get_logger().info("Node A started. Streaming Lidar & TF via UDP...")
 
     def lidar_callback(self, msg: PointCloud2):
         raw_points = pc2.read_points(msg, field_names=("x", "y", "z"), skip_nans=True)
@@ -45,38 +53,46 @@ class UdpBridgeANode(Node):
             if len(points.shape) == 1:
                 return
 
-        # 将一帧大点云切分为每次约 2000 点的小块 (24KB)，保证绝对不超 UDP 限制
-        CHUNK_SIZE = 2000
+        # 1. 尝试获取最新的 TF 变换 (odom -> base_link)
+        try:
+            # 查找最新时间的 TF
+            t = self.tf_buffer.lookup_transform('odom', 'base_link', rclpy.time.Time())
+            tx = t.transform.translation.x
+            ty = t.transform.translation.y
+            tz = t.transform.translation.z
+            qx = t.transform.rotation.x
+            qy = t.transform.rotation.y
+            qz = t.transform.rotation.z
+            qw = t.transform.rotation.w
+        except Exception as e:
+            # 如果刚启动还没拿到 TF，发一个全 0 默认姿态过去保底
+            tx, ty, tz, qx, qy, qz, qw = 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0
 
-        # (可选) 随机打乱点云：即使发生轻微丢包，地图密度也能保持均匀
+        # 2. 将 TF 7个参数打包成 28 字节的二进制头部 (Little-Endian Float32)
+        tf_header = struct.pack('<7f', tx, ty, tz, qx, qy, qz, qw)
+
+        CHUNK_SIZE = 2000
         np.random.shuffle(points)
 
-        chunks_sent = 0
         for i in range(0, points.shape[0], CHUNK_SIZE):
             chunk_points = points[i : i+CHUNK_SIZE]
             try:
-                self.sock_send.sendto(chunk_points.tobytes(), self.B_IP_PORT)
-                chunks_sent += 1
-                # 给予操作系统底层缓冲微小的喘息时间，防止瞬间突发丢包
+                # 3. 将 28 字节的 TF 头部和点云数据拼接在一起发送
+                payload = tf_header + chunk_points.tobytes()
+                self.sock_send.sendto(payload, self.B_IP_PORT)
                 time.sleep(0.001)
             except Exception as e:
                 self.get_logger().error(f"UDP Send Error: {e}")
-
-        # self.get_logger().info(f"Sent 1 frame as {chunks_sent} chunks.")
 
     def udp_receive_loop(self):
         while True:
             try:
                 data, addr = self.sock_recv.recvfrom(65535)
-
-                # 保护：只有足够大的包才是序列化后的 GridMap (通常 25KB~55KB)
                 if len(data) > 1000:
-                    # 反序列化还原出原汁原味的 GridMap 消息
                     msg = deserialize_message(data, GridMap)
                     self.map_pub.publish(msg)
-                    self.get_logger().info(f"✅ Received and published full GridMap to C++ Controller", throttle_duration_sec=1.0)
-            except Exception as e:
-                # 忽略残破的数据包
+                    self.get_logger().info(f"✅ Received GridMap from B", throttle_duration_sec=1.0)
+            except Exception:
                 pass
 
 def main(args=None):
