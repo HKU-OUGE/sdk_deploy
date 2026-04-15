@@ -73,14 +73,11 @@ ament_target_dependencies(lidar_relay
 )
 # ==============================================================
 
-add_executable(test_logbag src/test_logbag.cpp)
-ament_target_dependencies(test_logbag
+# ================= 新增：编译 C++ 版地图接收节点 =================
+add_executable(map_receiver_node src/map_receiver_node.cpp)
+ament_target_dependencies(map_receiver_node
         rclcpp
-        drdds
         grid_map_msgs
-        grid_map_ros
-        tf2_ros
-        tf2_geometry_msgs
 )
 # ==============================================================
 
@@ -120,18 +117,9 @@ else()
   )
 endif()
 
-# 给 test_logbag 链接所需库
-target_link_libraries(test_logbag
-        interface
-        onnxruntime
-        -lpthread
-        -lm
-        -lrt
-        -ldl
-        -lstdc++
-)
 
-install(TARGETS rl_deploy lidar_relay test_logbag
+# 安装所有编译出的节点 (包含新增的 map_receiver_node)
+install(TARGETS rl_deploy lidar_relay map_receiver_node
         DESTINATION lib/${PROJECT_NAME}
 )
 # 安装 launch 文件夹

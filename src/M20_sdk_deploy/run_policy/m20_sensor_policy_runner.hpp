@@ -134,7 +134,7 @@ public:
             tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
 
             grid_map_sub_ = ros_node_->create_subscription<grid_map_msgs::msg::GridMap>(
-            "/m20_deploy/elevation_map_udp", rclcpp::SensorDataQoS(),
+            "/elevation_map_remote", rclcpp::SensorDataQoS(),
                 [this](const grid_map_msgs::msg::GridMap::SharedPtr msg) {
                     std::lock_guard<std::mutex> lock(map_mutex_);
                     latest_map_ = *msg;
