@@ -332,6 +332,6 @@ if __name__ == "__main__":
     # gen.add_slope(length=3.0, slope=0.4, inverted=True)
     
     # 11. floating_ring (水平方框网，离地0.4m高，供机器人钻爬)
-    gen.add_floating_ring(inner_length=1.5, inner_width=2.0, ring_thickness=0.3, ring_width=0.15, ring_height=0.4)
-    gen.add_pit(pit_depth=0.5, gap_length=2.0, double_pit=True)
+    gen.add_floating_ring(inner_length=1.5, inner_width=2.0, ring_thickness=0.3, ring_width=0.15, ring_height=0.65)
+    gen.add_pit(pit_depth=0.4, gap_length=2.0, double_pit=True)
     gen.save()

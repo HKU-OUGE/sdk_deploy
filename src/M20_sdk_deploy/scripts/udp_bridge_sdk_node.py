@@ -17,8 +17,8 @@ class UdpBridgeANode(Node):
         super().__init__('udp_bridge_a_node')
 
         # --- 请替换为电脑 B 的真实 IP ---
-        self.B_IP_PORT = ("192.168.8.109", 5001)
-        # self.B_IP_PORT = ("127.0.0.1", 5001)
+        self.B_IP_PORT = ("192.168.8.103", 5001)
+        self.B_IP_PORT = ("127.0.0.1", 5001)
         self.LOCAL_PORT = 5002
 
         self.sock_send = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
