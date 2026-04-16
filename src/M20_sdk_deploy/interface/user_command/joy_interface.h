@@ -1,6 +1,6 @@
 /**
  * @file joy_interface.h
- * @brief Dual-Mode Joystick Driver for M20 (Supports Local USB & Remote UDP)
+ * @brief Dual-Mode Joystick Driver for M20 (Supports Local USB & Remote TCP)
  */
 #pragma once
 
@@ -19,9 +19,10 @@
 #include <sys/ioctl.h>
 #include <linux/joystick.h>
 
-// UDP 通信所需头文件
+// TCP 通信所需头文件
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <arpa/inet.h>
 #include <cstring>
 
@@ -40,11 +41,17 @@ class JoyInterface : public UserCommandInterface
 {
 private:
     std::thread poll_thread_;
+    std::thread tcp_thread_;
     std::atomic<bool> running_{false};
 
     // 缓存手柄状态
     std::vector<int> axis_values_;
     std::vector<int> button_values_;
+
+    // TCP 数据缓存与锁
+    std::mutex tcp_mutex_;
+    JoyDataPacket latest_tcp_packet_;
+    double last_tcp_recv_time_ = 0.0;
 
     // --- 手柄映射 (Logitech F710 / Xbox XInput 模式) ---
     const int RAW_AXIS_LX = 0;
@@ -75,38 +82,92 @@ private:
         return std::chrono::duration<double, std::milli>(now - start).count();
     }
 
+    // ==============================================================
+    // 后台 TCP 服务端线程 (负责监听端口，接收定长防粘包数据)
+    // ==============================================================
+    void tcp_worker() {
+        int server_fd = socket(AF_INET, SOCK_STREAM, 0);
+        int opt = 1;
+        setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+
+        struct sockaddr_in address;
+        memset(&address, 0, sizeof(address));
+        address.sin_family = AF_INET;
+        address.sin_addr.s_addr = INADDR_ANY;
+        address.sin_port = htons(9999);
+
+        bind(server_fd, (struct sockaddr *)&address, sizeof(address));
+        listen(server_fd, 1);
+
+        while (running_) {
+            // 使用 select 允许定期检查 running_ 状态，以便优雅退出
+            struct timeval tv;
+            tv.tv_sec = 1; tv.tv_usec = 0;
+            fd_set readfds;
+            FD_ZERO(&readfds);
+            FD_SET(server_fd, &readfds);
+
+            int activity = select(server_fd + 1, &readfds, NULL, NULL, &tv);
+            if (activity > 0 && FD_ISSET(server_fd, &readfds)) {
+                int client_fd = accept(server_fd, nullptr, nullptr);
+                if (client_fd < 0) continue;
+
+                // 配置客户端 Socket 选项 (禁用 Nagle 降低延迟，设置接收超时防死锁)
+                int nodelay = 1;
+                setsockopt(client_fd, IPPROTO_TCP, TCP_NODELAY, &nodelay, sizeof(nodelay));
+                struct timeval timeout;
+                timeout.tv_sec = 1; timeout.tv_usec = 0;
+                setsockopt(client_fd, SOL_SOCKET, SO_RCVTIMEO, (const char*)&timeout, sizeof(timeout));
+
+                std::cout << "\n[JoyInterface] ✨ TCP Joystick Connected from Laptop!\n";
+
+                while (running_) {
+                    uint32_t frame_len = 0;
+                    // 1. 读取 4 字节的长度头
+                    if (recv(client_fd, &frame_len, 4, MSG_WAITALL) <= 0) break;
+
+                    // 2. 长度校验与读取负载
+                    if (frame_len == sizeof(JoyDataPacket)) {
+                        JoyDataPacket pkt;
+                        if (recv(client_fd, &pkt, frame_len, MSG_WAITALL) <= 0) break;
+
+                        // 加锁更新缓存
+                        {
+                            std::lock_guard<std::mutex> lock(tcp_mutex_);
+                            latest_tcp_packet_ = pkt;
+                            last_tcp_recv_time_ = GetCurrentTimeStamp();
+                        }
+                    } else {
+                        // 收到不符合期望长度的数据，清理缓冲区以同步流
+                        std::vector<uint8_t> dump(frame_len);
+                        if (recv(client_fd, dump.data(), frame_len, MSG_WAITALL) <= 0) break;
+                        std::cout << "[JoyInterface] ⚠️ Warning: Received unknown packet size: " << frame_len << "\n";
+                    }
+                }
+                close(client_fd);
+                std::cout << "\n[JoyInterface] 🔌 TCP Joystick Disconnected. Waiting for reconnect...\n";
+            }
+        }
+        close(server_fd);
+    }
+
     void poll_loop() {
         axis_values_.resize(16, 0);
         button_values_.resize(16, 0);
 
-        // ================= [初始化 UDP 通信] =================
-        int sockfd = socket(AF_INET, SOCK_DGRAM, 0);
-        if (sockfd >= 0) {
-            struct sockaddr_in servaddr;
-            memset(&servaddr, 0, sizeof(servaddr));
-            servaddr.sin_family = AF_INET;
-            servaddr.sin_addr.s_addr = INADDR_ANY;
-            servaddr.sin_port = htons(9999);
-
-            int flags = fcntl(sockfd, F_GETFL, 0);
-            fcntl(sockfd, F_SETFL, flags | O_NONBLOCK);
-            bind(sockfd, (const struct sockaddr *)&servaddr, sizeof(servaddr));
-        }
+        // 初始化最新数据包
+        memset(&latest_tcp_packet_, 0, sizeof(latest_tcp_packet_));
 
         // ================= [初始化 USB 手柄] =================
         const char* device_path = "/dev/input/js0";
         int fd_js = -1;
-
-        double last_udp_recv_time = 0.0;
         bool usb_connected = false;
 
         std::cout << "\n[JoyInterface] >>> SUCCESS: Dual-Mode Initialized! <<<\n";
         std::cout << "  > Mode 1: Auto-detect local USB Joystick at " << device_path << "\n";
-        std::cout << "  > Mode 2: Listening for UDP remote data on port 9999\n";
+        std::cout << "  > Mode 2: TCP Server listening for Laptop remote data on port 9999\n";
 
         while (running_) {
-            bool udp_received_this_frame = false;
-
             // --- 1. 读取本地 USB 手柄 (非阻塞) ---
             if (fd_js < 0) {
                 fd_js = open(device_path, O_RDONLY | O_NONBLOCK);
@@ -127,33 +188,28 @@ private:
                 }
 
                 if (errno != EAGAIN && errno != EWOULDBLOCK) {
-                    close(fd_js); 
+                    close(fd_js);
                     fd_js = -1;
                     usb_connected = false;
-                    std::cout << "\n[JoyInterface] WARNING: USB Joystick disconnected.\n";
+                    std::cout << "\n[JoyInterface] WARNING: Local USB Joystick disconnected.\n";
                 }
             }
 
-            // --- 2. 读取 UDP 远程数据 (非阻塞) ---
-            if (sockfd >= 0) {
-                JoyDataPacket packet;
-                struct sockaddr_in cliaddr;
-                socklen_t len = sizeof(cliaddr);
-                while (recvfrom(sockfd, &packet, sizeof(packet), 0, (struct sockaddr *)&cliaddr, &len) == sizeof(JoyDataPacket)) {
-                    udp_received_this_frame = true;
-                    for(int i = 0; i < 8; i++) axis_values_[i] = packet.axes[i];
-                    for(int i = 0; i < 16; i++) button_values_[i] = packet.buttons[i];
+            // --- 2. 融合 TCP 远程数据 ---
+            bool tcp_connected = false;
+            {
+                std::lock_guard<std::mutex> lock(tcp_mutex_);
+                // 如果 0.5 秒内收到过 TCP 数据，则认为 TCP 存活，并采用 TCP 数据覆盖
+                if (GetCurrentTimeStamp() - last_tcp_recv_time_ < 0.5) {
+                    for(int i = 0; i < 8; i++) axis_values_[i] = latest_tcp_packet_.axes[i];
+                    for(int i = 0; i < 16; i++) button_values_[i] = latest_tcp_packet_.buttons[i];
+                    tcp_connected = true;
                 }
             }
 
-            // --- 3. 断联保护机制 ---
-            if (udp_received_this_frame) {
-                last_udp_recv_time = GetCurrentTimeStamp();
-            }
-            bool udp_connected = (GetCurrentTimeStamp() - last_udp_recv_time < 500.0);
-
-            // 只有当 USB 物理断开 且 UDP 也超时的情况下，才触发强制清零（急停）
-            if (!usb_connected && !udp_connected) {
+            // --- 3. 断联保护机制 (急停) ---
+            // 只有当本地 USB 断开，且远程 TCP 也超时断开的情况下，强制归零（急停）
+            if (!usb_connected && !tcp_connected) {
                 std::fill(axis_values_.begin(), axis_values_.end(), 0);
                 std::fill(button_values_.begin(), button_values_.end(), 0);
             }
@@ -210,10 +266,10 @@ private:
                 usr_cmd_->turnning_vel_scale = 0;
             }
 
+            // 控制循环周期 5ms (200Hz)
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
         }
 
-        if(sockfd >= 0) close(sockfd);
         if(fd_js >= 0) close(fd_js);
     }
 
@@ -227,12 +283,18 @@ public:
     void Start() override {
         if (running_) return;
         running_ = true;
+
+        // 启动主轮询线程和 TCP 监听后台线程
         poll_thread_ = std::thread(&JoyInterface::poll_loop, this);
+        tcp_thread_ = std::thread(&JoyInterface::tcp_worker, this);
     }
 
     void Stop() override {
         if (!running_) return;
         running_ = false;
+
+        // 优雅退出线程
+        if (tcp_thread_.joinable()) tcp_thread_.join();
         if (poll_thread_.joinable()) poll_thread_.join();
     }
 
