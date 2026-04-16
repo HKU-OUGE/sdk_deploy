@@ -34,7 +34,7 @@ class UdpBridgeANode(Node):
 
         # 专属隔离话题，供 C++ 和仿真器订阅
         self.map_pub = self.create_publisher(
-            GridMap, '/m20_deploy/elevation_map_udp', 10)
+            GridMap, '/elevation_map_remote', 10)
 
         self.recv_thread = threading.Thread(target=self.udp_receive_loop, daemon=True)
         self.recv_thread.start()

@@ -98,14 +98,28 @@ namespace qw {
             state_run_cnt_ = -1;
             start_flag_ = true;
 
-
+            // 获取机器人当前稳定的站立物理状态
             UpdateRobotObservation();
-
-            // 现在将真实状态传入，网络就可以安全地反推 last_action 了
+            
             policy_ptr_->OnEnter(rbs_);
 
-            run_policy_thread_ = std::thread(std::bind(&RLSensorControlState::PolicyRunner, this));
+            // ================== 网络预热 (Network Warm-up) ==================
+            std::cout << "[RLSensor] 开始网络预热 (Network Warm-up 50 frames)..." << std::endl;
+            
+            // 构造一个绝对静止的摇杆指令
+            UserCommand zero_cmd = *(uc_ptr_->GetUserCommand());
+            zero_cmd.forward_vel_scale = 0.0f;
+            zero_cmd.side_vel_scale = 0.0f;
+            zero_cmd.turnning_vel_scale = 0.0f;
 
+            // 在不发送给电机的情况下，让网络连续空跑 50 次，使得 GRU 隐状态完全收敛
+            for (int i = 0; i < 150; ++i) {
+                policy_ptr_->getRobotAction(rbs_, zero_cmd);
+            }
+            std::cout << "[RLSensor] 网络预热完成！隐藏状态已收敛。" << std::endl;
+            // =========================================================================
+
+            run_policy_thread_ = std::thread(std::bind(&RLSensorControlState::PolicyRunner, this));
             StateBase::msfb_.UpdateCurrentState(RobotMotionState::RLSensorControlMode);
         };
 

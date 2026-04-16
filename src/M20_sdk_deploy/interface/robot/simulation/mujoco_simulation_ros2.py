@@ -149,7 +149,7 @@ class MuJoCoSimulationNode(Node):
         # =============================================================
         self.elevation_sub = self.create_subscription(
             GridMap,
-            '/m20_deploy/elevation_map_udp',
+            '/elevation_map_remote',
             self._grid_map_callback,
             10)
         self.elevation_pts = np.empty((0, 3))

@@ -11,7 +11,7 @@ import threading
 M20_IP = "10.21.31.103"
 TCP_PORT = 9999
 JOY_DEVICE = "/dev/input/js0"
-SEND_FREQ = 200.0 # 发送频率 50Hz
+SEND_FREQ = 200.0 # 发送频率 200Hz
 # ==========================================
 
 # 全局状态缓存
