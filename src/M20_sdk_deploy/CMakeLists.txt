@@ -81,6 +81,13 @@ ament_target_dependencies(map_receiver_node
 )
 # ==============================================================
 
+add_executable(lidar_point_receive_node src/lidar_point_receiver_node.cpp)
+ament_target_dependencies(lidar_point_receive_node
+        rclcpp
+        sensor_msgs
+)
+# ==============================================================
+
 add_library(onnxruntime SHARED IMPORTED)
 set_target_properties(onnxruntime PROPERTIES IMPORTED_LOCATION "${THIRD_PARTY}/onnxruntime//${BUILD_PLATFORM}/lib/libonnxruntime.so")
 
@@ -119,7 +126,7 @@ endif()
 
 
 # 安装所有编译出的节点 (包含新增的 map_receiver_node)
-install(TARGETS rl_deploy lidar_relay map_receiver_node
+install(TARGETS rl_deploy lidar_relay map_receiver_node lidar_point_receive_node
         DESTINATION lib/${PROJECT_NAME}
 )
 # 安装 launch 文件夹
