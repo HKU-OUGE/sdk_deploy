@@ -66,9 +66,9 @@ private:
     const int RAW_BTN_X = 2;
     const int RAW_BTN_Y = 3;
 
-    float max_forward_ = 1.5f;
-    float max_side_    = 0.0f;
-    float max_yaw_     = 1.5f;
+    float max_forward_ = 0.7f;
+    float max_side_    = 0.5f;
+    float max_yaw_     = 0.7f;
 
     float normalize_axis(int val) {
         const int deadzone = 4000;
@@ -199,8 +199,8 @@ private:
             bool tcp_connected = false;
             {
                 std::lock_guard<std::mutex> lock(tcp_mutex_);
-                // 如果 0.5 秒内收到过 TCP 数据，则认为 TCP 存活，并采用 TCP 数据覆盖
-                if (GetCurrentTimeStamp() - last_tcp_recv_time_ < 0.5) {
+                // 修复：将 0.5 改为 500.0 (即 0.5 秒超时断连保护)
+                if (GetCurrentTimeStamp() - last_tcp_recv_time_ < 500.0) {
                     for(int i = 0; i < 8; i++) axis_values_[i] = latest_tcp_packet_.axes[i];
                     for(int i = 0; i < 16; i++) button_values_[i] = latest_tcp_packet_.buttons[i];
                     tcp_connected = true;
