@@ -212,7 +212,7 @@ public:
 
         // 订阅高程图
         grid_map_sub_ = ros_node_->create_subscription<grid_map_msgs::msg::GridMap>(
-        "/laptop_elevation_map", rclcpp::SensorDataQoS(),
+        "/elevation_map_remote", rclcpp::SensorDataQoS(),
             [this](const grid_map_msgs::msg::GridMap::SharedPtr msg) {
                 std::lock_guard<std::mutex> lock(map_mutex_);
                 latest_map_ = *msg;

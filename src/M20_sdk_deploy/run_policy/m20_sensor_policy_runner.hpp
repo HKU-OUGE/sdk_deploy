@@ -16,6 +16,11 @@
 #include <algorithm>
 #include <grid_map_ros/grid_map_ros.hpp>
 
+// === 新增：用于文件写入和时间获取 ===
+#include <fstream>
+#include <iomanip>
+#include <ctime>
+
 class M20SensorPolicyRunner : public PolicyRunnerBase {
 private:
     VecXf kp_, kd_, dof_default_eigen_policy, dof_default_eigen_robot;
@@ -89,6 +94,11 @@ private:
     bool scan_received_ = false;
     bool is_offline_test_ = false;
 
+    // === 新增：数据记录器相关变量 ===
+    std::ofstream data_log_file_;
+    const std::string log_file_name_ = "sensor_perception_log.csv";
+    timespec system_time;
+
 public:
     M20SensorPolicyRunner(const std::string &policy_name, const std::string &policy_path, bool is_offline_test = false) :
             PolicyRunnerBase(policy_name), env_(ORT_LOGGING_LEVEL_WARNING, "M20SensorPolicyRunner"),
@@ -140,7 +150,6 @@ public:
                     latest_map_ = *msg;
                     map_received_ = true;
                 });
-
 
             lidar_sub_ = ros_node_->create_subscription<sensor_msgs::msg::PointCloud2>(
     "/LIDAR_SIM_RAW", rclcpp::SensorDataQoS(),
@@ -229,6 +238,20 @@ public:
                 });
 
             ros_spin_thread_ = std::thread([this]() { rclcpp::spin(ros_node_); });
+
+            // === 新增：初始化数据记录器 CSV 文件 ===
+            data_log_file_.open(log_file_name_);
+            if (data_log_file_.is_open()) {
+                // 写入表头
+                data_log_file_ << "step,time,robot_x,robot_y,robot_z,robot_yaw,valid_h_count,min_fwd,min_bwd";
+                for(int i = 0; i < 187; ++i) data_log_file_ << ",h_" << i;
+                for(int i = 0; i < 126; ++i) data_log_file_ << ",fwd_" << i;
+                for(int i = 0; i < 126; ++i) data_log_file_ << ",bwd_" << i;
+                data_log_file_ << "\n";
+                std::cout << "✅ [Sensor Logger] Data will be saved to: " << log_file_name_ << std::endl;
+            } else {
+                std::cerr << "❌ [Sensor Logger] Failed to open file: " << log_file_name_ << std::endl;
+            }
         }
     }
 
@@ -236,6 +259,11 @@ public:
         if (!is_offline_test_) {
             rclcpp::shutdown();
             if (ros_spin_thread_.joinable()) ros_spin_thread_.join();
+            
+            // === 新增：关闭文件 ===
+            if (data_log_file_.is_open()) {
+                data_log_file_.close();
+            }
         }
     }
 
@@ -246,6 +274,12 @@ public:
 
         is_first_step_ = true;
         run_cnt_ = 0;
+    }
+
+    // === 新增：获取系统当前时间 ===
+    double getCurrentTime() {
+        clock_gettime(1, &system_time);
+        return system_time.tv_sec + system_time.tv_nsec / 1e9;
     }
 
     VecXf processAndInfer(
@@ -397,6 +431,7 @@ public:
         }
 
         int env_idx = 0;
+        int valid_h_count = 0; // === 新增：统计有效高度点 ===
         for (float dy = -0.5f; dy <= 0.5f + 1e-5; dy += 0.1f) {
             for (float dx = -0.8f; dx <= 0.8f + 1e-5; dx += 0.1f) {
                 if (map_converted && local_grid_map.exists("elevation")) {
@@ -406,8 +441,8 @@ public:
                     if (local_grid_map.isInside(pos)) {
                         float h = local_grid_map.atPosition("elevation", pos);
                         if (!std::isnan(h)) {
-
                             curr_heights[env_idx] = std::clamp(robot_z - h - 0.5f, -1.0f, 1.0f);
+                            valid_h_count++; // 累加有效点
                         }
                     }
                 }
@@ -425,7 +460,24 @@ public:
             }
         }
 
+        // === 新增：将现成的感知数据写入 CSV（不影响推断速度） ===
+        if (data_log_file_.is_open() && !is_offline_test_) {
+            float min_fwd = 5.0f, min_bwd = 5.0f;
+            for(float d : curr_fwd_bins) min_fwd = std::min(min_fwd, d);
+            for(float d : curr_bwd_bins) min_bwd = std::min(min_bwd, d);
 
+            data_log_file_ << run_cnt_ << "," << getCurrentTime() << ","
+                           << robot_x << "," << robot_y << "," << robot_z << "," << robot_yaw << ","
+                           << valid_h_count << "," << min_fwd << "," << min_bwd;
+
+            for (int i = 0; i < 187; ++i) data_log_file_ << "," << curr_heights[i];
+            for (int i = 0; i < 126; ++i) data_log_file_ << "," << curr_fwd_bins[i];
+            for (int i = 0; i < 126; ++i) data_log_file_ << "," << curr_bwd_bins[i];
+
+            data_log_file_ << "\n";
+        }
+
+        // 喂给网络推断
         processAndInfer(curr_proprio, curr_heights, curr_fwd_bins, curr_bwd_bins);
 
         for (int i = 0; i < action_dim; ++i) {
