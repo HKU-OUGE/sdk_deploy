@@ -404,7 +404,7 @@ public:
             curr_proprio[idx++] = std::clamp(last_action_eigen[i], -100.0f, 100.0f);
         }
 
-        std::vector<float> curr_heights(187, -1.0f);
+        std::vector<float> curr_heights(187, 0.0f);
         float robot_x = 0, robot_y = 0, robot_z = 0.45f, robot_yaw = 0;
         try {
             geometry_msgs::msg::TransformStamped t = tf_buffer_->lookupTransform("odom", "base_link", tf2::TimePointZero);

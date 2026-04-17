@@ -228,6 +228,10 @@ namespace qw {
 
         virtual StateName GetNextStateName() {
             if (uc_ptr_->GetUserCommand()->safe_control_mode != 0) return StateName::kJointDamping;
+            
+            if (uc_ptr_->GetUserCommand()->target_mode == uint8_t(RobotMotionState::StandingUp)) return StateName::kStandUp;
+            if (uc_ptr_->GetUserCommand()->target_mode == uint8_t(RobotMotionState::RLSensorControlMode)) return StateName::kRLSensorControl;
+            
             return StateName::kRLControl;
         }
     };

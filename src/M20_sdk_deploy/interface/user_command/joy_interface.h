@@ -218,22 +218,16 @@ private:
             usr_cmd_->time_stamp = GetCurrentTimeStamp();
 
             if (button_values_[RAW_BTN_B]) {
-                 usr_cmd_->target_mode = uint8_t(RobotMotionState::JointDamping);
+                usr_cmd_->target_mode = uint8_t(RobotMotionState::JointDamping);
             }
             else if (button_values_[RAW_BTN_A]) {
-                if (msfb_->GetCurrentState() == RobotMotionState::WaitingForStand) {
-                    usr_cmd_->target_mode = uint8_t(RobotMotionState::StandingUp);
-                }
+                usr_cmd_->target_mode = uint8_t(RobotMotionState::StandingUp);
             }
             else if (button_values_[RAW_BTN_X]) {
-                if (msfb_->GetCurrentState() == RobotMotionState::StandingUp) {
-                    usr_cmd_->target_mode = uint8_t(RobotMotionState::RLControlMode);
-                }
+                usr_cmd_->target_mode = uint8_t(RobotMotionState::RLControlMode);
             }
             else if (button_values_[RAW_BTN_Y]) {
-                if (msfb_->GetCurrentState() == RobotMotionState::StandingUp) {
-                    usr_cmd_->target_mode = uint8_t(RobotMotionState::RLSensorControlMode);
-                }
+                usr_cmd_->target_mode = uint8_t(RobotMotionState::RLSensorControlMode);
             }
 
             if (msfb_->GetCurrentState() == RobotMotionState::RLControlMode ||

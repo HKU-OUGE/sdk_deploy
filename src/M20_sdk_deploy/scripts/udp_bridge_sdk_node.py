@@ -2,102 +2,132 @@
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import PointCloud2
+from std_msgs.msg import Header
 from grid_map_msgs.msg import GridMap
+from geometry_msgs.msg import TransformStamped
 import sensor_msgs_py.point_cloud2 as pc2
-from rclpy.serialization import deserialize_message
+from rclpy.serialization import serialize_message
 import tf2_ros
 import socket
 import numpy as np
 import threading
-import time
 import struct
+import time
 
-class UdpBridgeANode(Node):
+def recvall(sock, n):
+    """辅助函数：确保从TCP流中完整读取 n 个字节"""
+    data = bytearray()
+    while len(data) < n:
+        packet = sock.recv(n - len(data))
+        if not packet:
+            return None
+        data.extend(packet)
+    return bytes(data)
+
+class TcpBridgeBNode(Node):
     def __init__(self):
-        super().__init__('udp_bridge_a_node')
+        super().__init__('tcp_bridge_b_node')
 
-        # --- 请替换为电脑 B 的真实 IP ---
-        self.B_IP_PORT = ("192.168.8.103", 5001)
-        self.B_IP_PORT = ("127.0.0.1", 5001)
-        self.LOCAL_PORT = 5002
+        # --- 请替换为电脑 A 的真实 IP ---
+        self.A_IP = "127.0.0.1" 
+        self.A_PORT = 5002
 
-        self.sock_send = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.sock_recv = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.sock_recv.bind(("0.0.0.0", self.LOCAL_PORT))
+        self.sock = None
+        self.is_connected = False
 
-        # 监听本地仿真器发布的 TF 树
-        self.tf_buffer = tf2_ros.Buffer()
-        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
+        self.lidar_pub = self.create_publisher(PointCloud2, '/LIDAR_POINT_CLOUD_MERGED', 10)
+        self.tf_broadcaster = tf2_ros.TransformBroadcaster(self)
 
-        self.lidar_sub = self.create_subscription(
-            PointCloud2, '/LIDAR_SIM_RAW', self.lidar_callback, 10)
+        self.grid_map_sub = self.create_subscription(
+            GridMap, '/elevation_mapping_node/elevation_map_raw', self.gridmap_callback, 10)
 
-        # 专属隔离话题，供 C++ 和仿真器订阅
-        self.map_pub = self.create_publisher(
-            GridMap, '/elevation_map_remote', 10)
-
-        self.recv_thread = threading.Thread(target=self.udp_receive_loop, daemon=True)
+        self.get_logger().info("Node B (Client) started. Trying to connect to Node A...")
+        
+        self.recv_thread = threading.Thread(target=self.tcp_connect_and_receive_loop, daemon=True)
         self.recv_thread.start()
 
-        self.get_logger().info("Node A started. Streaming Lidar & TF via UDP...")
-
-    def lidar_callback(self, msg: PointCloud2):
-        raw_points = pc2.read_points(msg, field_names=("x", "y", "z"), skip_nans=True)
-        if raw_points is None or len(raw_points) == 0:
+    def gridmap_callback(self, msg: GridMap):
+        if not self.is_connected or self.sock is None:
             return
-
-        if isinstance(raw_points, np.ndarray):
-            points = np.column_stack((raw_points['x'], raw_points['y'], raw_points['z'])).astype(np.float32)
-        else:
-            points = np.array(list(raw_points), dtype=np.float32)
-            if len(points.shape) == 1:
-                return
-
-        # 1. 尝试获取最新的 TF 变换 (odom -> base_link)
+            
         try:
-            # 查找最新时间的 TF
-            t = self.tf_buffer.lookup_transform('odom', 'base_link', rclpy.time.Time())
-            tx = t.transform.translation.x
-            ty = t.transform.translation.y
-            tz = t.transform.translation.z
-            qx = t.transform.rotation.x
-            qy = t.transform.rotation.y
-            qz = t.transform.rotation.z
-            qw = t.transform.rotation.w
+            serialized_msg = serialize_message(msg)
+            # 【TCP核心协议】：先发4字节长度，再发序列化数据
+            msg_length = struct.pack('<I', len(serialized_msg))
+            self.sock.sendall(msg_length + serialized_msg)
+            self.get_logger().info("⬆️ Sent large GridMap to Node A over TCP.", throttle_duration_sec=1.0)
         except Exception as e:
-            # 如果刚启动还没拿到 TF，发一个全 0 默认姿态过去保底
-            tx, ty, tz, qx, qy, qz, qw = 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0
+            self.get_logger().error(f"TCP Send Map Error: {e}")
+            self.is_connected = False # 触发重连
 
-        # 2. 将 TF 7个参数打包成 28 字节的二进制头部 (Little-Endian Float32)
-        tf_header = struct.pack('<7f', tx, ty, tz, qx, qy, qz, qw)
-
-        CHUNK_SIZE = 2000
-        np.random.shuffle(points)
-
-        for i in range(0, points.shape[0], CHUNK_SIZE):
-            chunk_points = points[i : i+CHUNK_SIZE]
-            try:
-                # 3. 将 28 字节的 TF 头部和点云数据拼接在一起发送
-                payload = tf_header + chunk_points.tobytes()
-                self.sock_send.sendto(payload, self.B_IP_PORT)
-                time.sleep(0.001)
-            except Exception as e:
-                self.get_logger().error(f"UDP Send Error: {e}")
-
-    def udp_receive_loop(self):
+    def tcp_connect_and_receive_loop(self):
         while True:
+            # 1. 连接/重连逻辑
+            self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             try:
-                data, addr = self.sock_recv.recvfrom(65535)
-                if len(data) > 1000:
-                    msg = deserialize_message(data, GridMap)
-                    self.map_pub.publish(msg)
-                    self.get_logger().info(f"✅ Received GridMap from B", throttle_duration_sec=1.0)
-            except Exception:
-                pass
+                self.sock.connect((self.A_IP, self.A_PORT))
+                self.is_connected = True
+                self.get_logger().info(f"✅ Successfully connected to Node A ({self.A_IP}:{self.A_PORT})")
+            except Exception as e:
+                self.get_logger().warn(f"Waiting for Node A... ({e})", throttle_duration_sec=2.0)
+                time.sleep(2)
+                continue
+
+            # 2. 持续接收雷达点云与 TF 数据的循环
+            while self.is_connected:
+                try:
+                    # 读取4字节包长
+                    raw_msglen = recvall(self.sock, 4)
+                    if not raw_msglen:
+                        break # 连接断开
+                    msglen = struct.unpack('<I', raw_msglen)[0]
+
+                    # 读取真实载荷
+                    data = recvall(self.sock, msglen)
+                    if not data:
+                        break # 连接断开
+
+                    if len(data) <= 28:
+                        continue
+
+                    # 拆解数据
+                    tx, ty, tz, qx, qy, qz, qw = struct.unpack('<7f', data[:28])
+                    payload = data[28:]
+                    if len(payload) % 12 != 0:
+                        continue
+
+                    points_array = np.frombuffer(payload, dtype=np.float32).reshape(-1, 3)
+                    current_time = self.get_clock().now().to_msg()
+
+                    # 恢复本地 TF 树
+                    t = TransformStamped()
+                    t.header.stamp = current_time
+                    t.header.frame_id = 'odom'
+                    t.child_frame_id = 'base_link'
+                    t.transform.translation.x, t.transform.translation.y, t.transform.translation.z = tx, ty, tz
+                    t.transform.rotation.x, t.transform.rotation.y, t.transform.rotation.z, t.transform.rotation.w = qx, qy, qz, qw
+                    self.tf_broadcaster.sendTransform(t)
+
+                    # 发布本地雷达云
+                    header = Header()
+                    header.stamp = current_time
+                    header.frame_id = 'base_link'
+                    pc2_msg = pc2.create_cloud_xyz32(header, points_array.tolist())
+                    self.lidar_pub.publish(pc2_msg)
+
+                except Exception as e:
+                    self.get_logger().error(f"TCP Recv Error: {e}")
+                    break
+            
+            # 如果跳出循环，说明连接断开，准备重连
+            self.is_connected = False
+            self.sock.close()
+            self.get_logger().warn("❌ Connection lost. Reconnecting in 2 seconds...")
+            time.sleep(2)
 
 def main(args=None):
     rclpy.init(args=args)
-    node = UdpBridgeANode()
+    node = TcpBridgeBNode()
     rclpy.spin(node)
     node.destroy_node()
     rclpy.shutdown()

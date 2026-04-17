@@ -356,7 +356,7 @@ public:
     // === 新增：影子数据收集函数 (计算、记录文件，但不喂给网络) ===
     // ====================================================================
     void CollectShadowPerceptionData() {
-        std::vector<float> curr_heights(187, -1.0f);
+        std::vector<float> curr_heights(187, 0.0f);
         float robot_x = 0, robot_y = 0, robot_z = 0.45f, robot_yaw = 0;
 
         // 1. TF 获取
