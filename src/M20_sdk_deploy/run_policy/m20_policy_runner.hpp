@@ -126,7 +126,7 @@ private:
 
     // 新增：数据记录器相关变量
     std::ofstream data_log_file_;
-    const std::string log_file_name_ = "shadow_perception_log.csv";
+    std::string log_file_name_;
 
 public:
     M20PolicyRunner(const std::string &policy_name, const std::string &policy_path) :
@@ -185,12 +185,17 @@ public:
         current_action_eigen.setZero(action_dim);
 
         // ====================================================================
-        // === 新增：初始化数据记录器 CSV 文件 ===
+        // === 新增：初始化数据记录器 CSV 文件 (带时间戳) ===
         // ====================================================================
+        std::time_t t = std::time(nullptr);
+        char time_str[100];
+        std::strftime(time_str, sizeof(time_str), "%Y%m%d_%H%M%S", std::localtime(&t));
+        log_file_name_ = "shadow_perception_log_" + std::string(time_str) + ".csv";
+
         data_log_file_.open(log_file_name_);
         if (data_log_file_.is_open()) {
-            // 写入表头
-            data_log_file_ << "step,time,robot_x,robot_y,robot_z,robot_yaw,valid_h_count,min_fwd,min_bwd";
+            // 写入表头 (新增 hole_ratio_pct)
+            data_log_file_ << "step,time,robot_x,robot_y,robot_z,robot_yaw,valid_h_count,hole_ratio_pct,min_fwd,min_bwd";
             for(int i = 0; i < 187; ++i) data_log_file_ << ",h_" << i;
             for(int i = 0; i < 126; ++i) data_log_file_ << ",fwd_" << i;
             for(int i = 0; i < 126; ++i) data_log_file_ << ",bwd_" << i;
@@ -328,12 +333,13 @@ public:
         run_cnt_ = 0;
         cmd_vel_input_.setZero();
         last_action_eigen.setZero(action_dim);
+        current_action_eigen.setZero(action_dim);
         tmp_action_eigen.setZero(action_dim);
         motor_p_eigen.setZero(12);
         motor_v_eigen.setZero(motor_num);
 
         std::fill(hidden_state_data_.begin(), hidden_state_data_.end(), 0.0f);
-        std::cout << "[M20PolicyRunner] Reset hidden state." << std::endl;
+        std::cout << "[M20PolicyRunner] Reset hidden state & FSM buffers." << std::endl;
     }
 
     VecXf Onnx_infer(VecXf current_observation){
@@ -422,9 +428,15 @@ public:
 
         // 4. 将提取好的数据写入 CSV 文件
         if (data_log_file_.is_open()) {
+            float hole_ratio_pct = (187.0f - valid_h_count) / 187.0f * 100.0f;
+
+            if (run_cnt_ % 50 == 0) {
+                std::cout << "[Shadow Perception] 后台高程图空洞占比: " 
+                          << std::fixed << std::setprecision(1) << hole_ratio_pct << "%" << std::endl;
+            }
             data_log_file_ << run_cnt_ << "," << getCurrentTime() << ","
                            << robot_x << "," << robot_y << "," << robot_z << "," << robot_yaw << ","
-                           << valid_h_count << "," << min_fwd << "," << min_bwd;
+                           << valid_h_count << "," << hole_ratio_pct << "," << min_fwd << "," << min_bwd;
 
             // 依次追加高度图和雷达数组
             for (int i = 0; i < 187; ++i) data_log_file_ << "," << curr_heights[i];

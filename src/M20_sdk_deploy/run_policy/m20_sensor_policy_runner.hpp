@@ -96,7 +96,7 @@ private:
 
     // === 新增：数据记录器相关变量 ===
     std::ofstream data_log_file_;
-    const std::string log_file_name_ = "sensor_perception_log.csv";
+    std::string log_file_name_;
     timespec system_time;
 
 public:
@@ -239,11 +239,15 @@ public:
 
             ros_spin_thread_ = std::thread([this]() { rclcpp::spin(ros_node_); });
 
-            // === 新增：初始化数据记录器 CSV 文件 ===
+            // === 新增：初始化数据记录器 CSV 文件 (带时间戳) ===
+            std::time_t t = std::time(nullptr);
+            char time_str[100];
+            std::strftime(time_str, sizeof(time_str), "%Y%m%d_%H%M%S", std::localtime(&t));
+            log_file_name_ = "sensor_perception_log_" + std::string(time_str) + ".csv";
+            
             data_log_file_.open(log_file_name_);
             if (data_log_file_.is_open()) {
-                // 写入表头
-                data_log_file_ << "step,time,robot_x,robot_y,robot_z,robot_yaw,valid_h_count,min_fwd,min_bwd";
+                data_log_file_ << "step,time,robot_x,robot_y,robot_z,robot_yaw,valid_h_count,hole_ratio_pct,min_fwd,min_bwd";
                 for(int i = 0; i < 187; ++i) data_log_file_ << ",h_" << i;
                 for(int i = 0; i < 126; ++i) data_log_file_ << ",fwd_" << i;
                 for(int i = 0; i < 126; ++i) data_log_file_ << ",bwd_" << i;
@@ -270,9 +274,12 @@ public:
     void OnEnter(const RobotBasicState &rbs) override {
         std::fill(hidden_state_data_.begin(), hidden_state_data_.end(), 0.0f);
         
-        last_action_eigen.setZero(16);
+        last_action_eigen.setZero(action_dim);
+        current_action_eigen.setZero(action_dim);
+        tmp_action_eigen.setZero(action_dim);
 
-        is_first_step_ = true;
+        // 触发 processAndInfer 中的历史帧刷新机制
+        is_first_step_ = true; 
         run_cnt_ = 0;
     }
 
@@ -466,9 +473,17 @@ public:
             for(float d : curr_fwd_bins) min_fwd = std::min(min_fwd, d);
             for(float d : curr_bwd_bins) min_bwd = std::min(min_bwd, d);
 
+            // 计算空洞数据百分比 (总采样点数为 187)
+            float hole_ratio_pct = (187.0f - valid_h_count) / 187.0f * 100.0f;
+
+            if (run_cnt_ % 50 == 0) {
+                std::cout << "[Sensor Policy] 高程图空洞占比: " 
+                          << std::fixed << std::setprecision(1) << hole_ratio_pct << "% "
+                          << "(有效点: " << valid_h_count << "/187)" << std::endl;
+            }
             data_log_file_ << run_cnt_ << "," << getCurrentTime() << ","
                            << robot_x << "," << robot_y << "," << robot_z << "," << robot_yaw << ","
-                           << valid_h_count << "," << min_fwd << "," << min_bwd;
+                           << valid_h_count << "," << hole_ratio_pct << "," << min_fwd << "," << min_bwd;
 
             for (int i = 0; i < 187; ++i) data_log_file_ << "," << curr_heights[i];
             for (int i = 0; i < 126; ++i) data_log_file_ << "," << curr_fwd_bins[i];
