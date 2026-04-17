@@ -412,17 +412,26 @@ public:
         }
 
         std::vector<float> curr_heights(187, 0.0f);
-        float robot_x = 0, robot_y = 0, robot_z = 0.45f, robot_yaw = 0;
+        // ==========================================================
+        // === 智能位姿获取：优先 TF，失败则降级使用地图中心 ===
+        // ==========================================================
+        float robot_x = 0, robot_y = 0, robot_z = 0.45f;
+        float robot_yaw = ro.base_rpy(2); // 默认使用高频可靠的 IMU 航向角
+        bool tf_valid = false;
+
         try {
             geometry_msgs::msg::TransformStamped t = tf_buffer_->lookupTransform("odom", "base_link", tf2::TimePointZero);
-            robot_x = t.transform.translation.x; robot_y = t.transform.translation.y; robot_z = t.transform.translation.z;
+            robot_x = t.transform.translation.x; 
+            robot_y = t.transform.translation.y; 
+            robot_z = t.transform.translation.z; // 拿到了真实的动态高度！
+            
             tf2::Quaternion q(t.transform.rotation.x, t.transform.rotation.y, t.transform.rotation.z, t.transform.rotation.w);
             tf2::Matrix3x3 m(q); double roll, pitch, yaw; m.getRPY(roll, pitch, yaw);
-            robot_yaw = yaw;
+            robot_yaw = yaw; // 如果 TF 正常，以 TF 为准
+            tf_valid = true;
         } catch (const tf2::TransformException & ex) { 
-
             if (run_cnt_ % 50 == 0) {
-                std::cerr << "❌ [TF Error] 无法获取 odom 到 base_link 的位姿: " << ex.what() << std::endl;
+                std::cerr << "⚠️ [TF Warning] 无 TF，将启用地图中心降级方案: " << ex.what() << std::endl;
             }
         }
 
@@ -441,19 +450,79 @@ public:
         if (has_map) {
             map_converted = grid_map::GridMapRosConverter::fromMessage(local_map_msg, local_grid_map);
             
-            // === 定期比对机器人的坐标和地图的中心点 ===
-            if (run_cnt_ % 50 == 0) {
+            // 【核心】：如果 TF 失败（真机环境），启用“地图中心 + 运动学姿态估计”
+            if (!tf_valid) {
                 grid_map::Position map_center = local_grid_map.getPosition();
-                float map_len_x = local_grid_map.getLength().x();
-                std::cout << "[Debug] Robot XY: (" << robot_x << ", " << robot_y << ") | "
-                          << "Map Frame: " << local_grid_map.getFrameId() << " | "
-                          << "Map Center: (" << map_center.x() << ", " << map_center.y() << ") | "
-                          << "Map Length: " << map_len_x << std::endl;
+                robot_x = map_center.x();
+                robot_y = map_center.y();
+
+                if (local_grid_map.exists("elevation") && local_grid_map.isInside(map_center)) {
+                    float center_ground_h = local_grid_map.atPosition("elevation", map_center);
+                    if (!std::isnan(center_ground_h)) {
+                        
+                        // ==========================================================
+                        // === 运动学高度补偿 (Forward Kinematics + IMU) ===
+                        // ==========================================================
+                        float leg_h_sum = 0.0f;
+                        // 提取 4 条腿的 Knee 关节索引: FL(2), FR(6), HL(10), HR(14)
+                        int knee_indices[4] = {2, 6, 10, 14}; 
+                        for (int i = 0; i < 4; ++i) {
+                            // 无论膝关节是正偏还是负偏，cos(x) 都能求出正确的连杆对角线长度
+                            leg_h_sum += std::sqrt(0.125f + 0.125f * std::cos(ro.joint_pos(knee_indices[i])));
+                        }
+                        float avg_leg_h = leg_h_sum / 4.0f;
+                        
+                        // 加上结构偏置和轮子半径 (经标准站立高度 0.45m 校准得出的固定差值)
+                        float base_offset = avg_leg_h + 0.0113f; 
+                        
+                        // 使用 IMU 的 Pitch 和 Roll 将腿部长度投影到世界坐标系的 Z 轴上
+                        float pitch = ro.base_rpy(1);
+                        float roll = ro.base_rpy(0);
+                        float dynamic_z = base_offset * std::cos(pitch) * std::cos(roll);
+                        
+                        // 最终动态高度 = 地面高度 + 运动学悬挂高度
+                        robot_z = center_ground_h + dynamic_z; 
+                        // ==========================================================
+                    }
+                }
+            }
+
+            if (run_cnt_ % 50 == 0) {
+                std::cout << "🎯 [Pose] X: " << std::fixed << std::setprecision(2) << robot_x 
+                          << " | Y: " << robot_y << " | Z: " << robot_z 
+                          << (tf_valid ? " (From TF)" : " (From MapCenter)") << std::endl;
             }
         }
 
+        // ==========================================================
+        // === 运动学 Z 轴补偿对比测试 (仅在有 TF 时打印验证) ===
+        // ==========================================================
+        if (map_converted && run_cnt_ % 10 == 0 && tf_valid) {
+            grid_map::Position map_center = local_grid_map.getPosition();
+            if (local_grid_map.exists("elevation") && local_grid_map.isInside(map_center)) {
+                float center_ground_h = local_grid_map.atPosition("elevation", map_center);
+                if (!std::isnan(center_ground_h)) {
+                    // 重跑一遍运动学估计
+                    float leg_h_sum = 0.0f;
+                    int knee_indices[4] = {2, 6, 10, 14}; 
+                    for (int i = 0; i < 4; ++i) {
+                        leg_h_sum += std::sqrt(0.125f + 0.125f * std::cos(ro.joint_pos(knee_indices[i])));
+                    }
+                    float dynamic_z = (leg_h_sum / 4.0f + 0.0113f) * std::cos(ro.base_rpy(1)) * std::cos(ro.base_rpy(0));
+                    float est_z = center_ground_h + dynamic_z;
+                    
+                    float z_error = robot_z - est_z;
+                    std::cout << "📐 [运动学验证] TF真实Z: " << std::fixed << std::setprecision(3) << robot_z 
+                              << " | 运动学估计Z: " << est_z 
+                              << " | 误差: " << z_error << " m" << std::endl;
+                }
+            }
+        }
+        // ==========================================================
+
         int env_idx = 0;
         int valid_h_count = 0; // === 新增：统计有效高度点 ===
+        // 这里才是 187 个点的采样循环，里面不要放打印！
         for (float dy = -0.5f; dy <= 0.5f + 1e-5; dy += 0.1f) {
             for (float dx = -0.8f; dx <= 0.8f + 1e-5; dx += 0.1f) {
                 if (map_converted && local_grid_map.exists("elevation")) {
