@@ -372,7 +372,12 @@ public:
             tf2::Quaternion q(t.transform.rotation.x, t.transform.rotation.y, t.transform.rotation.z, t.transform.rotation.w);
             tf2::Matrix3x3 m(q); double roll, pitch, yaw; m.getRPY(roll, pitch, yaw);
             robot_yaw = yaw;
-        } catch (const tf2::TransformException & ex) { }
+        } catch (const tf2::TransformException & ex) { 
+
+            if (run_cnt_ % 50 == 0) {
+                std::cerr << "❌ [TF Error/Shadow] 无法获取 odom 到 base_link 的位姿: " << ex.what() << std::endl;
+            }
+        }
 
         // 2. 地图采样
         grid_map_msgs::msg::GridMap local_map_msg;
@@ -389,6 +394,16 @@ public:
         bool map_converted = false;
         if (has_map) {
             map_converted = grid_map::GridMapRosConverter::fromMessage(local_map_msg, local_grid_map);
+            
+            // === 定期比对机器人的坐标和地图的中心点 ===
+            if (run_cnt_ % 50 == 0) {
+                grid_map::Position map_center = local_grid_map.getPosition();
+                float map_len_x = local_grid_map.getLength().x();
+                std::cout << "[Shadow Debug] Robot XY: (" << robot_x << ", " << robot_y << ") | "
+                          << "Map Frame: " << local_grid_map.getFrameId() << " | "
+                          << "Map Center: (" << map_center.x() << ", " << map_center.y() << ") | "
+                          << "Map Length: " << map_len_x << std::endl;
+            }
         }
 
         int env_idx = 0;
