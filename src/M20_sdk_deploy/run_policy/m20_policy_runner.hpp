@@ -400,41 +400,58 @@ public:
         if (has_map) {
             map_converted = grid_map::GridMapRosConverter::fromMessage(local_map_msg, local_grid_map);
             
-            // 【核心】：如果 TF 失败（真机环境），启用“地图中心 + 运动学姿态估计”
+            // 【核心】：如果 TF 失败（真机环境），启用“四足正向运动学 + 地图联合采样”
             if (!tf_valid) {
                 grid_map::Position map_center = local_grid_map.getPosition();
                 robot_x = map_center.x();
                 robot_y = map_center.y();
 
-                if (local_grid_map.exists("elevation") && local_grid_map.isInside(map_center)) {
-                    float center_ground_h = local_grid_map.atPosition("elevation", map_center);
-                    if (!std::isnan(center_ground_h)) {
-                        
-                        // ==========================================================
-                        // === 运动学高度补偿 (Forward Kinematics + IMU) ===
-                        // ==========================================================
-                        float leg_h_sum = 0.0f;
-                        // 提取 4 条腿的 Knee 关节索引: FL(2), FR(6), HL(10), HR(14)
-                        int knee_indices[4] = {2, 6, 10, 14}; 
-                        for (int i = 0; i < 4; ++i) {
-                            // 无论膝关节是正偏还是负偏，cos(x) 都能求出正确的连杆对角线长度
-                            leg_h_sum += std::sqrt(0.125f + 0.125f * std::cos(ro.joint_pos(knee_indices[i])));
+                // ==========================================================
+                // === 高精度运动学高度补偿 (4-Point Leg Odometry) ===
+                // ==========================================================
+                float estimated_z_sum = 0.0f;
+                int valid_feet_count = 0;
+
+                // 足端相对于基座中心的近似初始水平偏移
+                float base_x_offsets[4] = {0.31f, 0.31f, -0.31f, -0.31f};
+                float base_y_offsets[4] = {0.17f, -0.17f, 0.17f, -0.17f};
+                int hipy_indices[4] = {1, 5, 9, 13};
+                int knee_indices[4] = {2, 6, 10, 14};
+
+                for (int i = 0; i < 4; ++i) {
+                    float q_hipy = ro.joint_pos(hipy_indices[i]);
+                    float q_knee = ro.joint_pos(knee_indices[i]);
+                    
+                    // 1. 修复1：使用 0.072f 补偿轮毂半径和基座中心 Z 偏移
+                    float z_drop = 0.25f * std::cos(q_hipy) + 0.25f * std::cos(q_hipy + q_knee) + 0.086f;
+                    
+                    // 2. 修复2：关节角度已自带正确方向，绝对不能对后腿的 X 偏移取反！
+                    float x_shift = 0.25f * std::sin(q_hipy) + 0.25f * std::sin(q_hipy + q_knee);
+                    
+                    Eigen::Vector3f foot_local(base_x_offsets[i] + x_shift, base_y_offsets[i], -z_drop);
+                    Eigen::Vector3f foot_world_offset = ro.base_rot_mat * foot_local;
+                    
+                    // 3. 查询该脚踩着的真实地面高度
+                    grid_map::Position foot_pos(robot_x + foot_world_offset.x(), robot_y + foot_world_offset.y());
+                    if (local_grid_map.isInside(foot_pos)) {
+                        float foot_ground_h = local_grid_map.atPosition("elevation", foot_pos);
+                        if (!std::isnan(foot_ground_h)) {
+                            // 4. Z_base = 脚底地面高度 - 脚相对于Base在世界Z轴的偏移
+                            estimated_z_sum += (foot_ground_h - foot_world_offset.z());
+                            valid_feet_count++;
                         }
-                        float avg_leg_h = leg_h_sum / 4.0f;
-                        
-                        // 加上结构偏置和轮子半径 (经标准站立高度 0.45m 校准得出的固定差值)
-                        float base_offset = avg_leg_h + 0.0113f; 
-                        
-                        // 使用 IMU 的 Pitch 和 Roll 将腿部长度投影到世界坐标系的 Z 轴上
-                        float pitch = ro.base_rpy(1);
-                        float roll = ro.base_rpy(0);
-                        float dynamic_z = base_offset * std::cos(pitch) * std::cos(roll);
-                        
-                        // 最终动态高度 = 地面高度 + 运动学悬挂高度
-                        robot_z = center_ground_h + dynamic_z; 
-                        // ==========================================================
                     }
                 }
+
+                if (valid_feet_count > 0) {
+                    robot_z = estimated_z_sum / valid_feet_count;
+                } else {
+                    if (local_grid_map.exists("elevation") && local_grid_map.isInside(map_center)) {
+                        float center_ground_h = local_grid_map.atPosition("elevation", map_center);
+                        if (!std::isnan(center_ground_h)) robot_z = center_ground_h + 0.45f;
+                    }
+                }
+                // ==========================================================
             }
 
 
@@ -450,24 +467,41 @@ public:
         // === 运动学 Z 轴补偿对比测试 (仅在有 TF 时打印验证) ===
         // ==========================================================
         if (map_converted && run_cnt_ % 10 == 0 && tf_valid) {
-            grid_map::Position map_center = local_grid_map.getPosition();
-            if (local_grid_map.exists("elevation") && local_grid_map.isInside(map_center)) {
-                float center_ground_h = local_grid_map.atPosition("elevation", map_center);
-                if (!std::isnan(center_ground_h)) {
-                    // 重跑一遍运动学估计
-                    float leg_h_sum = 0.0f;
-                    int knee_indices[4] = {2, 6, 10, 14}; 
-                    for (int i = 0; i < 4; ++i) {
-                        leg_h_sum += std::sqrt(0.125f + 0.125f * std::cos(ro.joint_pos(knee_indices[i])));
+            float estimated_z_sum = 0.0f;
+            int valid_feet_count = 0;
+
+            float base_x_offsets[4] = {0.31f, 0.31f, -0.31f, -0.31f};
+            float base_y_offsets[4] = {0.17f, -0.17f, 0.17f, -0.17f};
+            int hipy_indices[4] = {1, 5, 9, 13};
+            int knee_indices[4] = {2, 6, 10, 14};
+
+            for (int i = 0; i < 4; ++i) {
+                float q_hipy = ro.joint_pos(hipy_indices[i]);
+                float q_knee = ro.joint_pos(knee_indices[i]);
+                float z_drop = 0.25f * std::cos(q_hipy) + 0.25f * std::cos(q_hipy + q_knee) + 0.086f;
+                float x_shift = 0.25f * std::sin(q_hipy) + 0.25f * std::sin(q_hipy + q_knee);
+                Eigen::Vector3f foot_local(base_x_offsets[i] + x_shift, base_y_offsets[i], -z_drop);
+                Eigen::Vector3f foot_world_offset = ro.base_rot_mat * foot_local;
+                
+                // 注意这里使用的也是 map_center 来模拟没 TF 时的场景
+                grid_map::Position map_center = local_grid_map.getPosition();
+                grid_map::Position foot_pos(map_center.x() + foot_world_offset.x(), map_center.y() + foot_world_offset.y());
+                
+                if (local_grid_map.isInside(foot_pos)) {
+                    float foot_ground_h = local_grid_map.atPosition("elevation", foot_pos);
+                    if (!std::isnan(foot_ground_h)) {
+                        estimated_z_sum += (foot_ground_h - foot_world_offset.z());
+                        valid_feet_count++;
                     }
-                    float dynamic_z = (leg_h_sum / 4.0f + 0.0113f) * std::cos(ro.base_rpy(1)) * std::cos(ro.base_rpy(0));
-                    float est_z = center_ground_h + dynamic_z;
-                    
-                    float z_error = robot_z - est_z;
-                    std::cout << "📐 [运动学验证] TF真实Z: " << std::fixed << std::setprecision(3) << robot_z 
-                              << " | 运动学估计Z: " << est_z 
-                              << " | 误差: " << z_error << " m" << std::endl;
                 }
+            }
+
+            if (valid_feet_count > 0) {
+                float est_z = estimated_z_sum / valid_feet_count;
+                float z_error = robot_z - est_z;
+                std::cout << "📐 [运动学验证] TF真实Z: " << std::fixed << std::setprecision(3) << robot_z 
+                          << " | 运动学估计Z: " << est_z 
+                          << " | 误差: " << z_error << " m" << std::endl;
             }
         }
         // ==========================================================
