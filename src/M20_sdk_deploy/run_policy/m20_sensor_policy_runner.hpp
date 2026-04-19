@@ -15,8 +15,7 @@
 #include <cmath>
 #include <algorithm>
 #include <grid_map_ros/grid_map_ros.hpp>
-
-// === 新增：用于文件写入和时间获取 ===
+#include <std_msgs/msg/float32_multi_array.hpp>
 #include <fstream>
 #include <iomanip>
 #include <ctime>
@@ -79,7 +78,8 @@ private:
 
     rclcpp::Node::SharedPtr ros_node_;
     rclcpp::Subscription<grid_map_msgs::msg::GridMap>::SharedPtr grid_map_sub_;
-    rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr lidar_sub_;
+    // rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr lidar_sub_;
+    rclcpp::Subscription<std_msgs::msg::Float32MultiArray>::SharedPtr scan_array_sub_;
     std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
     std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
     std::thread ros_spin_thread_;
@@ -151,89 +151,16 @@ public:
                     map_received_ = true;
                 });
 
-            lidar_sub_ = ros_node_->create_subscription<sensor_msgs::msg::PointCloud2>(
-    "/LIDAR_SIM_RAW", rclcpp::SensorDataQoS(),
-                [this](const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
-                    std::vector<float> local_fwd_bins(126, 5.0f);
-                    std::vector<float> local_bwd_bins(126, 5.0f);
+            scan_array_sub_ = ros_node_->create_subscription<std_msgs::msg::Float32MultiArray>(
+                "/scan/multi_layer_features_array", rclcpp::SensorDataQoS(),
+                [this](const std_msgs::msg::Float32MultiArray::SharedPtr msg) {
+                    // 安全检查：必须是前向 126 + 后向 126 = 252 个特征
+                    if (msg->data.size() != 252) return;
                     
-                    int x_offset_idx = -1, y_offset_idx = -1, z_offset_idx = -1;
-                    for (const auto& field : msg->fields) {
-                        if (field.name == "x") x_offset_idx = field.offset;
-                        if (field.name == "y") y_offset_idx = field.offset;
-                        if (field.name == "z") z_offset_idx = field.offset;
-                    }
-                    if (x_offset_idx == -1 || y_offset_idx == -1 || z_offset_idx == -1) return;
-
-                    const float target_angles[6] = {-25.0f, -15.0f, -5.0f, 5.0f, 15.0f, 25.0f};
-                    const float angle_tol = 4.0f; // 角度容差 (度)
-                    const float dy_step = 0.05f;
-                    const float y_min = -0.5f;
-                    const int num_rays = 21;
-                    
-                    // 对齐 env_cfg.py 中的位置偏移
-                    const float fwd_x_offset = 0.32028f;
-                    const float bwd_x_offset = -0.32028f;
-                    const float z_offset = -0.013f;
-
-                    for (size_t i = 0; i < msg->data.size(); i += msg->point_step) {
-                        float x, y, z;
-                        memcpy(&x, &msg->data[i + x_offset_idx], sizeof(float));
-                        memcpy(&y, &msg->data[i + y_offset_idx], sizeof(float));
-                        memcpy(&z, &msg->data[i + z_offset_idx], sizeof(float));
-
-                        if (std::isnan(x) || std::isnan(y) || std::isnan(z)) continue;
-
-                        // 1. 检查是否属于前向 Lidar
-                        float fwd_dx = x - fwd_x_offset;
-                        float fwd_dy = y;
-                        float fwd_dz = z - z_offset;
-
-                        if (fwd_dx > 0.0f && fwd_dy >= y_min - dy_step/2.0f && fwd_dy <= -y_min + dy_step/2.0f) {
-                            // 计算真实的俯仰角 (Pitch Angle)
-                            float angle_deg = std::atan2(-fwd_dz, fwd_dx) * 180.0f / M_PI;
-                            
-                            for (int l = 0; l < 6; ++l) {
-                                if (std::abs(angle_deg - target_angles[l]) <= angle_tol) {
-                                    int bin = std::round((fwd_dy - y_min) / dy_step);
-                                    if (bin >= 0 && bin < num_rays) {
-                                        // 必须使用 3D 空间真实距离！
-                                        float r = std::sqrt(fwd_dx*fwd_dx + fwd_dy*fwd_dy + fwd_dz*fwd_dz);
-                                        if (r < local_fwd_bins[l * num_rays + bin]) {
-                                            local_fwd_bins[l * num_rays + bin] = r;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        // 2. 检查是否属于后向 Lidar
-                        float bwd_dx = x - bwd_x_offset;
-                        float bwd_dy = y;
-                        float bwd_dz = z - z_offset;
-
-                        if (bwd_dx < 0.0f && bwd_dy >= y_min - dy_step/2.0f && bwd_dy <= -y_min + dy_step/2.0f) {
-                            // 由于向后看，-dx 才是前向投影
-                            float angle_deg = std::atan2(-bwd_dz, -bwd_dx) * 180.0f / M_PI;
-                            
-                            for (int l = 0; l < 6; ++l) {
-                                if (std::abs(angle_deg - target_angles[l]) <= angle_tol) {
-                                    // 遵循原有的 (-y) 映射逻辑保证左右一致性
-                                    int bin = std::round((-bwd_dy - y_min) / dy_step);
-                                    if (bin >= 0 && bin < num_rays) {
-                                        float r = std::sqrt(bwd_dx*bwd_dx + bwd_dy*bwd_dy + bwd_dz*bwd_dz);
-                                        if (r < local_bwd_bins[l * num_rays + bin]) {
-                                            local_bwd_bins[l * num_rays + bin] = r;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
                     std::lock_guard<std::mutex> lock(scan_mutex_);
-                    fwd_scan_bins_ = local_fwd_bins;
-                    bwd_scan_bins_ = local_bwd_bins;
+                    // 直接内存拷贝前 126 个给前向，后 126 个给后向
+                    std::copy(msg->data.begin(), msg->data.begin() + 126, fwd_scan_bins_.begin());
+                    std::copy(msg->data.begin() + 126, msg->data.end(), bwd_scan_bins_.begin());
                     scan_received_ = true;
                 });
 
@@ -431,7 +358,7 @@ public:
             tf2::Quaternion q(t.transform.rotation.x, t.transform.rotation.y, t.transform.rotation.z, t.transform.rotation.w);
             tf2::Matrix3x3 m(q); double roll, pitch, yaw; m.getRPY(roll, pitch, yaw);
             robot_yaw = yaw; // 如果 TF 正常，以 TF 为准
-            tf_valid = false;
+            tf_valid = true;
         } catch (const tf2::TransformException & ex) { 
             if (run_cnt_ % 50 == 0) {
                 std::cerr << "⚠️ [TF Warning] 无 TF，将启用地图中心降级方案: " << ex.what() << std::endl;

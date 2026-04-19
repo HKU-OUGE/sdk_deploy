@@ -19,6 +19,7 @@ import xml.etree.ElementTree as ET
 from tf2_ros import TransformBroadcaster
 from geometry_msgs.msg import TransformStamped
 import math
+from std_msgs.msg import Float32MultiArray
 try:
     import rclpy
     from rclpy.node import Node
@@ -146,6 +147,9 @@ class MuJoCoSimulationNode(Node):
         # 将原本的 '/LIDAR_POINT_CLOUD_MERGED' 改为 '/LIDAR_SIM_RAW'
         # 这样能强制让高程图和 lidar_to_scan 只能去吃 Node B 吐出来的数据
         self.lidar_pub = self.create_publisher(PointCloud2, '/LIDAR_SIM_RAW', 10)
+        self.scan_array_sub = self.create_subscription(
+            Float32MultiArray, '/scan/multi_layer_features_array', self._scan_array_callback, 10)
+        self.received_scan_array = None
         # =============================================================
         self.elevation_sub = self.create_subscription(
             GridMap,
@@ -208,7 +212,9 @@ class MuJoCoSimulationNode(Node):
             joint_cmd = data_list[i]; self.kp_cmd[i] = joint_cmd.kp; self.kd_cmd[i] = joint_cmd.kd
             pub_pos[i] = joint_cmd.position; pub_vel[i] = joint_cmd.velocity; self.tau_ff[i] = joint_cmd.torque 
         self.pos_cmd.flat = pub_pos * JOINT_DIR + POS_OFFSET_RAD; self.vel_cmd.flat = pub_vel * JOINT_DIR
-
+    def _scan_array_callback(self, msg):
+        if len(msg.data) == 252:
+            self.received_scan_array = np.array(msg.data, dtype=np.float32)
     def _apply_joint_torque(self):
         q = self.data.qpos[7:7 + self.dof_num].reshape(-1, 1); dq = self.data.qvel[6:6 + self.dof_num].reshape(-1, 1)
         self.input_tq = (self.kp_cmd * (self.pos_cmd - q) + self.kd_cmd * (self.vel_cmd - dq) + self.tau_ff)
@@ -373,61 +379,54 @@ class MuJoCoSimulationNode(Node):
         msg.point_step = 12
         msg.row_step = msg.point_step * msg.width
         msg.is_dense = True
-        # =========== 新增：计算严格对齐网络的 252 根 Scan 射线 ===========
-        y_offsets = np.linspace(-0.5, 0.5, 21)
-        angles_deg = [-25.0, -15.0, -5.0, 5.0, 15.0, 25.0]
-        
-        net_pts_list = []
-        base_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "base_link")
-        
-        # MuJoCo mj_ray 需要一个可写的 int32 数组来返回击中的 geomid
-        geomid_arr = np.array([-1], dtype=np.int32)
-
-        # 前向 126 根射线 (平行于 Y 轴排列，各拥有 6 个 Pitch 角)
-        for pitch in angles_deg:
-            rad = math.radians(pitch)
-            dir_base = np.array([math.cos(rad), 0.0, math.sin(rad)])
-            dir_world = base_mat @ dir_base
-            for y in y_offsets:
-                orig_base = np.array([self.front_pos[0], self.front_pos[1] + y, self.front_pos[2]])
-                pnt_world = base_pos + base_mat @ orig_base
-                
-                geomid_arr[0] = -1
-                dist = mujoco.mj_ray(
-                    self.model, self.data,
-                    pnt_world, dir_world,
-                    self.geomgroup, 1, base_id,
-                    geomid_arr
-                )
-                
-                # dist 正常，且不在盲区内 (< 5.0)
-                if geomid_arr[0] != -1 and dist > 0 and dist <= 5.0:
-                    hit_pt = pnt_world + dir_world * dist
-                    net_pts_list.append(hit_pt)
-                    
-        # 后向 126 根射线 (X反向)
-        for pitch in angles_deg:
-            rad = math.radians(pitch)
-            dir_base = np.array([-math.cos(rad), 0.0, math.sin(rad)])
-            dir_world = base_mat @ dir_base
-            for y in y_offsets:
-                orig_base = np.array([self.rear_pos[0], self.rear_pos[1] + y, self.rear_pos[2]])
-                pnt_world = base_pos + base_mat @ orig_base
-                
-                geomid_arr[0] = -1
-                dist = mujoco.mj_ray(
-                    self.model, self.data,
-                    pnt_world, dir_world,
-                    self.geomgroup, 1, base_id,
-                    geomid_arr
-                )
-                
-                if geomid_arr[0] != -1 and dist > 0 and dist <= 5.0:
-                    hit_pt = pnt_world + dir_world * dist
-                    net_pts_list.append(hit_pt)
-
-        if net_pts_list:
-            self.network_scan_pts = np.array(net_pts_list, dtype=np.float64)
+        # =========== 监听 lidar_to_scan 脚本===========
+        if hasattr(self, 'received_scan_array') and self.received_scan_array is not None:
+            scan_data = self.received_scan_array
+            angles_deg = [-25.0, -15.0, -5.0, 5.0, 15.0, 25.0]
+            y_offsets = np.linspace(-0.5, 0.5, 21)
+            
+            fwd_bins = scan_data[:126].reshape(6, 21)
+            bwd_bins = scan_data[126:].reshape(6, 21)
+            
+            base_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "base_link")
+            base_pos = self.data.xpos[base_id]
+            base_mat = self.data.xmat[base_id].reshape(3, 3)
+            
+            net_pts_list = []
+            
+            # 还原前向特征点
+            for i, pitch_deg in enumerate(angles_deg):
+                pitch_rad = math.radians(pitch_deg)
+                cos_p = math.cos(pitch_rad)
+                for j, y in enumerate(y_offsets):
+                    r = fwd_bins[i, j]
+                    # 剔除盲区(-1.0)和最大量程(5.0)，只渲染有效击中的点
+                    if 0.2 <= r < 5.0: 
+                        val = r**2 - y**2
+                        if val > 0:
+                            x_local = math.sqrt(val) * cos_p
+                            z_local = -x_local * math.tan(pitch_rad)
+                            pt_base = self.front_pos + np.array([x_local, y, z_local])
+                            pt_world = base_pos + base_mat @ pt_base
+                            net_pts_list.append(pt_world)
+                            
+            # 还原后向特征点
+            for i, pitch_deg in enumerate(angles_deg):
+                pitch_rad = math.radians(pitch_deg)
+                cos_p = math.cos(pitch_rad)
+                for j, y in enumerate(y_offsets):
+                    r = bwd_bins[i, j]
+                    if 0.2 <= r < 5.0:
+                        val = r**2 - y**2
+                        if val > 0:
+                            x_local = math.sqrt(val) * cos_p
+                            z_local = -x_local * math.tan(pitch_rad)
+                            # 后向的 X 取反，Y 因为处理时的镜像也取反
+                            pt_base = self.rear_pos + np.array([-x_local, -y, z_local])
+                            pt_world = base_pos + base_mat @ pt_base
+                            net_pts_list.append(pt_world)
+                            
+            self.network_scan_pts = np.array(net_pts_list, dtype=np.float64) if net_pts_list else np.empty((0, 3))
         else:
             self.network_scan_pts = np.empty((0, 3))
         # =================================================================
