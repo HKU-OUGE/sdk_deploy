@@ -88,6 +88,18 @@ ament_target_dependencies(lidar_point_receive_node
 )
 # ==============================================================
 
+add_executable(lidar_to_scan_cpp src/lidar_to_scan.cpp)
+ament_target_dependencies(lidar_to_scan_cpp 
+    rclcpp 
+    sensor_msgs 
+    std_msgs
+)
+
+install(TARGETS
+    lidar_to_scan_cpp
+    DESTINATION lib/${PROJECT_NAME}
+)
+
 add_library(onnxruntime SHARED IMPORTED)
 set_target_properties(onnxruntime PROPERTIES IMPORTED_LOCATION "${THIRD_PARTY}/onnxruntime//${BUILD_PLATFORM}/lib/libonnxruntime.so")
 
