@@ -373,9 +373,67 @@ class MuJoCoSimulationNode(Node):
         msg.point_step = 12
         msg.row_step = msg.point_step * msg.width
         msg.is_dense = True
+        # =========== 新增：计算严格对齐网络的 252 根 Scan 射线 ===========
+        y_offsets = np.linspace(-0.5, 0.5, 21)
+        angles_deg = [-25.0, -15.0, -5.0, 5.0, 15.0, 25.0]
+        
+        net_pts_list = []
+        base_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "base_link")
+        
+        # MuJoCo mj_ray 需要一个可写的 int32 数组来返回击中的 geomid
+        geomid_arr = np.array([-1], dtype=np.int32)
+
+        # 前向 126 根射线 (平行于 Y 轴排列，各拥有 6 个 Pitch 角)
+        for pitch in angles_deg:
+            rad = math.radians(pitch)
+            dir_base = np.array([math.cos(rad), 0.0, math.sin(rad)])
+            dir_world = base_mat @ dir_base
+            for y in y_offsets:
+                orig_base = np.array([self.front_pos[0], self.front_pos[1] + y, self.front_pos[2]])
+                pnt_world = base_pos + base_mat @ orig_base
+                
+                geomid_arr[0] = -1
+                dist = mujoco.mj_ray(
+                    self.model, self.data,
+                    pnt_world, dir_world,
+                    self.geomgroup, 1, base_id,
+                    geomid_arr
+                )
+                
+                # dist 正常，且不在盲区内 (< 5.0)
+                if geomid_arr[0] != -1 and dist > 0 and dist <= 5.0:
+                    hit_pt = pnt_world + dir_world * dist
+                    net_pts_list.append(hit_pt)
+                    
+        # 后向 126 根射线 (X反向)
+        for pitch in angles_deg:
+            rad = math.radians(pitch)
+            dir_base = np.array([-math.cos(rad), 0.0, math.sin(rad)])
+            dir_world = base_mat @ dir_base
+            for y in y_offsets:
+                orig_base = np.array([self.rear_pos[0], self.rear_pos[1] + y, self.rear_pos[2]])
+                pnt_world = base_pos + base_mat @ orig_base
+                
+                geomid_arr[0] = -1
+                dist = mujoco.mj_ray(
+                    self.model, self.data,
+                    pnt_world, dir_world,
+                    self.geomgroup, 1, base_id,
+                    geomid_arr
+                )
+                
+                if geomid_arr[0] != -1 and dist > 0 and dist <= 5.0:
+                    hit_pt = pnt_world + dir_world * dist
+                    net_pts_list.append(hit_pt)
+
+        if net_pts_list:
+            self.network_scan_pts = np.array(net_pts_list, dtype=np.float64)
+        else:
+            self.network_scan_pts = np.empty((0, 3))
+        # =================================================================
+
         msg.data = merged_points.astype(np.float32).tobytes()
         self.lidar_pub.publish(msg)
-
     def _grid_map_callback(self, msg: GridMap):
         try:
             layer_idx = msg.layers.index('elevation')
@@ -387,7 +445,6 @@ class MuJoCoSimulationNode(Node):
         length_y = msg.info.length_y
         center_x = msg.info.pose.position.x
         center_y = msg.info.pose.position.y
-        # 正确的代码
         frame_id = msg.header.frame_id
         
         cells_x = int(round(length_x / resolution))
@@ -398,40 +455,107 @@ class MuJoCoSimulationNode(Node):
         if base_id != -1:
             base_pos = self.data.xpos[base_id]
             base_mat = self.data.xmat[base_id].reshape(3, 3)
-            rx, ry = base_pos[0], base_pos[1]
+            base_quat = self.data.xquat[base_id]  # 获取 w, x, y, z
+            rpy = self.quaternion_to_euler(base_quat)
+            robot_yaw = rpy[2]
+            robot_x, robot_y = base_pos[0], base_pos[1]
         else:
             return  # 若获取不到基座信息，则安全退出
         
         pts = []
-        step = 2 
         
-        for idx_x in range(0, cells_x, step):
-            for idx_y in range(0, cells_y, step):
-                idx = idx_x * cells_y + idx_y
-                if idx >= len(data):
-                    continue
-                
-                val = data[idx]
-                if not math.isnan(val):
+        # 严格对齐网络 height_scan 的 187 个采样点 (17 x 11)
+        # X 轴：-0.8m 到 0.8m，步长 0.1m
+        # Y 轴：-0.5m 到 0.5m，步长 0.1m
+        for dy in np.arange(-0.5, 0.5 + 1e-4, 0.1):
+            for dx in np.arange(-0.8, 0.8 + 1e-4, 0.1):
+                # 1. 计算该采样点在世界坐标系下的绝对期望 XY 坐标
+                world_query_x = robot_x + (dx * math.cos(robot_yaw) - dy * math.sin(robot_yaw))
+                world_query_y = robot_y + (dx * math.sin(robot_yaw) + dy * math.cos(robot_yaw))
 
-                    px = center_x + length_x / 2.0 - (idx_y + 0.5) * resolution
-                    py = center_y + length_y / 2.0 - (idx_x + 0.5) * resolution
-                    pz = val
-                    
+                # 2. 根据 GridMap 发布的 frame 决定查询坐标
+                if frame_id == "base_link":
+                    map_query_x = dx
+                    map_query_y = dy
+                else:
+                    map_query_x = world_query_x
+                    map_query_y = world_query_y
 
-                    if frame_id == "base_link":
-                        local_pt = np.array([px, py, pz])
-                        world_pt = base_mat @ local_pt + base_pos
-                        wx, wy, wz = world_pt[0], world_pt[1], world_pt[2]
-                    else:
+                # 3. 换算回 GridMap 的 1D 数组索引 (向下取整保证跨越0时不出错)
+                idx_y = int(math.floor((center_x + length_x / 2.0 - map_query_x) / resolution))
+                idx_x = int(math.floor((center_y + length_y / 2.0 - map_query_y) / resolution))
 
-                        wx, wy, wz = px, py, pz
-                    
-
-                    # if (wx - rx)**2 + (wy - ry)**2 < 2.25:
-                    pts.append([wx, wy, wz])
+                # 4. 如果坐标在地图范围内，提取高度值
+                if 0 <= idx_x < cells_x and 0 <= idx_y < cells_y:
+                    idx = idx_x * cells_y + idx_y
+                    if idx < len(data):
+                        val = data[idx]
+                        if not math.isnan(val):
+                            # 转换为世界坐标系并存入可视化数组
+                            if frame_id == "base_link":
+                                local_pt = np.array([map_query_x, map_query_y, val])
+                                world_pt = base_mat @ local_pt + base_pos
+                                pts.append([world_pt[0], world_pt[1], world_pt[2]])
+                            else:
+                                pts.append([world_query_x, world_query_y, val])
                         
         self.elevation_pts = np.array(pts)
+    # def _grid_map_callback(self, msg: GridMap):
+    #     try:
+    #         layer_idx = msg.layers.index('elevation')
+    #     except ValueError:
+    #         return
+            
+    #     resolution = msg.info.resolution
+    #     length_x = msg.info.length_x
+    #     length_y = msg.info.length_y
+    #     center_x = msg.info.pose.position.x
+    #     center_y = msg.info.pose.position.y
+    #     # 正确的代码
+    #     frame_id = msg.header.frame_id
+        
+    #     cells_x = int(round(length_x / resolution))
+    #     cells_y = int(round(length_y / resolution))
+    #     data = msg.data[layer_idx].data
+        
+    #     base_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "base_link")
+    #     if base_id != -1:
+    #         base_pos = self.data.xpos[base_id]
+    #         base_mat = self.data.xmat[base_id].reshape(3, 3)
+    #         rx, ry = base_pos[0], base_pos[1]
+    #     else:
+    #         return  # 若获取不到基座信息，则安全退出
+        
+    #     pts = []
+    #     step = 2 
+        
+    #     for idx_x in range(0, cells_x, step):
+    #         for idx_y in range(0, cells_y, step):
+    #             idx = idx_x * cells_y + idx_y
+    #             if idx >= len(data):
+    #                 continue
+                
+    #             val = data[idx]
+    #             if not math.isnan(val):
+
+    #                 px = center_x + length_x / 2.0 - (idx_y + 0.5) * resolution
+    #                 py = center_y + length_y / 2.0 - (idx_x + 0.5) * resolution
+    #                 pz = val
+                    
+
+    #                 if frame_id == "base_link":
+    #                     local_pt = np.array([px, py, pz])
+    #                     world_pt = base_mat @ local_pt + base_pos
+    #                     wx, wy, wz = world_pt[0], world_pt[1], world_pt[2]
+    #                 else:
+
+    #                     wx, wy, wz = px, py, pz
+                    
+
+    #                 # if (wx - rx)**2 + (wy - ry)**2 < 2.25:
+    #                 pts.append([wx, wy, wz])
+                        
+    #     self.elevation_pts = np.array(pts)
     def start(self):
         step = 0; last_time = time.time()
         print("[Sim] Starting simulation loop...", file=sys.stderr, flush=True)
@@ -477,7 +601,14 @@ class MuJoCoSimulationNode(Node):
                                 self.viewer.user_scn.geoms[geom_idx].pos[:] = vis_elev[i]
                                 self.viewer.user_scn.geoms[geom_idx].rgba[:] = [1.0, 0.0, 0.0, 0.8]
                                 geom_idx += 1
-                        
+                        # ================= 网络输入：多层 Scan 252 点 (亮蓝色) =================
+                        if hasattr(self, 'network_scan_pts') and len(self.network_scan_pts) > 0:
+                            vis_scan = self.network_scan_pts
+                            num_scan = min(len(vis_scan), max_g - geom_idx)
+                            for i in range(num_scan):
+                                self.viewer.user_scn.geoms[geom_idx].pos[:] = vis_scan[i]
+                                self.viewer.user_scn.geoms[geom_idx].rgba[:] = [0.0, 0.8, 1.0, 1.0] # 亮蓝色，全不透明
+                                geom_idx += 1
                         self.viewer.user_scn.ngeom = geom_idx
                     self.viewer.sync()
             rclpy.spin_once(self, timeout_sec=0.0)

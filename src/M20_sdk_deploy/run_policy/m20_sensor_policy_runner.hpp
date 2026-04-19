@@ -237,8 +237,11 @@ public:
                     scan_received_ = true;
                 });
 
-            ros_spin_thread_ = std::thread([this]() { rclcpp::spin(ros_node_); });
-
+            ros_spin_thread_ = std::thread([this]() { 
+                rclcpp::executors::MultiThreadedExecutor executor;
+                executor.add_node(ros_node_);
+                executor.spin();
+            });
             // === 新增：初始化数据记录器 CSV 文件 (带时间戳) ===
             std::time_t t = std::time(nullptr);
             char time_str[100];
