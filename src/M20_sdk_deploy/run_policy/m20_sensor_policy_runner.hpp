@@ -428,7 +428,7 @@ public:
             tf2::Quaternion q(t.transform.rotation.x, t.transform.rotation.y, t.transform.rotation.z, t.transform.rotation.w);
             tf2::Matrix3x3 m(q); double roll, pitch, yaw; m.getRPY(roll, pitch, yaw);
             robot_yaw = yaw; // 如果 TF 正常，以 TF 为准
-            tf_valid = true;
+            tf_valid = false;
         } catch (const tf2::TransformException & ex) { 
             if (run_cnt_ % 50 == 0) {
                 std::cerr << "⚠️ [TF Warning] 无 TF，将启用地图中心降级方案: " << ex.what() << std::endl;

@@ -78,8 +78,7 @@ namespace qw {
                 namespace fs = std::filesystem;
                 fs::path base = fs::path(__FILE__).parent_path();
 
-                // [修改 4] 加载你最新导出的 unified_policy.onnx 模型
-                auto model_path = fs::canonical(base / ".." / ".." / "policy" / "unified_policy.onnx");
+                auto model_path = fs::canonical(base / ".." / ".." / "policy" / "scan_unified_policy.onnx");
                 m20_policy_ = std::make_shared<M20SensorPolicyRunner>("m20_sensor_policy", model_path.string());
             }
 
