@@ -37,10 +37,15 @@
     <geom type="box" pos="27.900 0.0 0.250" size="0.500 1.500 0.250" material="stone_mat"/>
     <geom type="box" pos="29.400 0.0 0.450" size="1.000 1.500 0.05" material="stone_mat"/>
     <geom type="box" pos="31.400 0.0 0.450" size="1.000 1.500 0.05" material="stone_mat"/>
-    <geom type="box" pos="31.400 1.460 0.700" size="0.040 0.040 0.200" material="rail_mat"/>
-    <geom type="box" pos="31.400 -1.460 0.700" size="0.040 0.040 0.200" material="rail_mat"/>
-    <geom type="box" pos="31.400 0.0 0.940" size="0.040 1.500 0.040" material="ring_mat"/>
+    <geom type="box" pos="31.400 1.460 0.600" size="0.040 0.040 0.100" material="rail_mat"/>
+    <geom type="box" pos="31.400 -1.460 0.600" size="0.040 0.040 0.100" material="rail_mat"/>
+    <geom type="box" pos="31.400 0.0 0.740" size="0.040 1.500 0.040" material="ring_mat"/>
     <geom type="box" pos="33.400 0.0 0.450" size="1.000 1.500 0.05" material="stone_mat"/>
-    <geom type="box" pos="39.400 0.0 0.450" size="5.0 2.0 0.05" material="stone_mat"/>
+    <geom type="box" pos="35.400 0.0 0.450" size="1.000 1.500 0.05" material="stone_mat"/>
+    <geom type="box" pos="35.400 1.400 0.800" size="0.100 0.100 0.300" material="rail_mat"/>
+    <geom type="box" pos="35.400 -1.400 0.800" size="0.100 0.100 0.300" material="rail_mat"/>
+    <geom type="box" pos="35.400 0.0 1.200" size="0.100 1.500 0.100" material="ring_mat"/>
+    <geom type="box" pos="37.400 0.0 0.450" size="1.000 1.500 0.05" material="stone_mat"/>
+    <geom type="box" pos="43.400 0.0 0.450" size="5.0 2.0 0.05" material="stone_mat"/>
   </worldbody>
 </mujoco>

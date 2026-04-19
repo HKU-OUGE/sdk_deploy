@@ -194,9 +194,20 @@ class MujocoTerrainGenerator:
         self.add_platform(2.0)
 
     # 11. Hurdle
-    def add_hurdle(self, hurdle_height=0.4, width=3.0, bar_thickness=0.08):
-        """生成跨栏地形，横杆悬空，机器人可以跳过或钻过"""
-        print(f"Generating Hurdle (Height={hurdle_height}) at X > {self.current_x}...")
+    def add_hurdle(self, hurdle_height=0.4, width=None, bar_thickness=None):
+        """
+        生成跨栏地形，横杆悬空，机器人可以跳过或钻过。
+        :param hurdle_height: 跨栏高度
+        :param width: 跨栏宽度（跨越跑道方向），如果不传则默认为 3.0
+        :param bar_thickness: 横杆的粗细（长度和厚度），如果不传则默认为 0.08
+        """
+        # 如果没有传入数值，则沿用之前的逻辑默认值
+        if width is None:
+            width = 3.0
+        if bar_thickness is None:
+            bar_thickness = 0.08
+
+        print(f"Generating Hurdle (Height={hurdle_height}, Width={width}, Thickness={bar_thickness}) at X > {self.current_x}...")
         start_x = self.current_x
         
         # 底部通行地台
@@ -218,6 +229,7 @@ class MujocoTerrainGenerator:
                       size=f"{bar_thickness/2:.3f} {bar_thickness/2:.3f} {hurdle_height/2:.3f}", material="rail_mat")
         
         # 水平横杆 (跨越跑道宽度)
+        # 这里的 bar_thickness 会同时影响 X 方向（长度）和 Z 方向（厚度）
         bar_z = self.track_z + hurdle_height + bar_thickness/2
         ET.SubElement(self.worldbody, "geom", type="box", pos=f"{hurdle_x:.3f} 0.0 {bar_z:.3f}",
                       size=f"{bar_thickness/2:.3f} {width/2:.3f} {bar_thickness/2:.3f}", material="ring_mat")
@@ -248,8 +260,9 @@ if __name__ == "__main__":
 
     # 4. pit
     gen.add_pit(pit_depth=0.6, gap_length=2.0, double_pit=True)
-    
     # 5. Hurdle (跨栏)
-    gen.add_hurdle(hurdle_height=0.4, width=3.0)
-    
+    gen.add_hurdle(hurdle_height=0.2, width=3.0) 
+    # 6. Hurdle (跨栏-钻)
+    # gen.add_hurdle(hurdle_height=0.6, width=3.0)
+    gen.add_hurdle(hurdle_height=0.6, bar_thickness=0.2)
     gen.save()
