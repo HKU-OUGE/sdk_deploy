@@ -157,6 +157,8 @@ source /opt/robot/scripts/setup_ros2.sh
 ros2 service call /SDK_MODE drdds/srv/StdSrvInt32 command:\ 200 # /200 is /JOINTS_DATA topic frequency, recommended below 500 Hz. This value can only be factors of 1000.
 
 # Run
+source /opt/ros/foxy/setup.bash #source ROS2 env
+source /opt/robot/scripts/setup_ros2.sh
 source install/setup.bash
 ros2 run m20_sdk_deploy rl_deploy
 

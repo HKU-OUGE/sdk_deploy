@@ -12,7 +12,7 @@ class LidarToScanArrayNode(Node):
         super().__init__('lidar_to_scan_array_node')
         # 订阅点云话题
         self.subscription = self.create_subscription(
-            PointCloud2, '/LIDAR_SIM_RAW', self.pc_callback, 10)
+            PointCloud2, '/LIDAR/POINTS', self.pc_callback, 10)
             
         # 发布Float32 数组 (252 个数值)
         self.array_pub = self.create_publisher(
