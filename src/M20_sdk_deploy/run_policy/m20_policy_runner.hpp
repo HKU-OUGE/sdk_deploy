@@ -168,7 +168,10 @@ public:
         // 4. 初始化 Hidden State
         hidden_state_data_.resize(hidden_dim, 0.0f);
 
-        // 5. 初始化 PID 和 映射
+        // 5. 加载速度配置
+        LoadVelocityConfig(policy_path_);
+
+        // 6. 初始化 PID 和 映射
         kp_ = Vec4f(80, 80, 80, 0.).replicate(4, 1);
         kd_ = Vec4f(2, 2, 2, 0.6).replicate(4, 1);
 
@@ -503,7 +506,7 @@ public:
 
         Vec3f base_omgea = ro.base_omega * omega_scale_;
         Vec3f projected_gravity = ro.base_rot_mat.inverse() * gravity_direction;
-        Vec3f command = Vec3f(uc.forward_vel_scale, uc.side_vel_scale, uc.turnning_vel_scale);
+        Vec3f command = ClampCommand(Vec3f(uc.forward_vel_scale, uc.side_vel_scale, uc.turnning_vel_scale));
 
         for (int i = 0; i < action_dim; ++i){
             joint_pos_rl(i) = ro.joint_pos(robot2policy_idx[i]);

@@ -110,6 +110,8 @@ public:
         session_options_.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_EXTENDED);
         session_ = std::make_unique<Ort::Session>(env_, policy_path.c_str(), session_options_);
 
+        LoadVelocityConfig(policy_path);
+
         proprio_env_data_.resize(proprio_env_dim_, 0.0f);
         estimator_history_data_.resize(estimator_dim_, 0.0f);
         hidden_state_data_.resize(hidden_dim_, 0.0f);
@@ -319,7 +321,7 @@ public:
     RobotAction getRobotAction(const RobotBasicState &ro, const UserCommand &uc) override {
         Vec3f base_omega = ro.base_omega * omega_scale_;
         Vec3f projected_gravity = ro.base_rot_mat.inverse() * gravity_direction;
-        Vec3f command = Vec3f(uc.forward_vel_scale, uc.side_vel_scale, uc.turnning_vel_scale);
+        Vec3f command = ClampCommand(Vec3f(uc.forward_vel_scale, uc.side_vel_scale, uc.turnning_vel_scale));
 
         std::vector<float> curr_proprio(proprio_dim_, 0.0f);
         int idx = 0;

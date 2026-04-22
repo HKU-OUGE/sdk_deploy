@@ -231,6 +231,7 @@ namespace qw {
             
             if (uc_ptr_->GetUserCommand()->target_mode == uint8_t(RobotMotionState::StandingUp)) return StateName::kStandUp;
             if (uc_ptr_->GetUserCommand()->target_mode == uint8_t(RobotMotionState::RLSensorControlMode)) return StateName::kRLSensorControl;
+            if (uc_ptr_->GetUserCommand()->target_mode == uint8_t(RobotMotionState::RLCrawlControlMode)) return StateName::kRLCrawlControl;
             
             return StateName::kRLControl;
         }

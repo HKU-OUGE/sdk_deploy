@@ -16,7 +16,8 @@ namespace types{
         StandingUp      = 1,
         JointDamping    = 2,
         RLControlMode   = 6,
-        RLSensorControlMode = 7, // <--- 新增：带感知的运动模式
+        RLSensorControlMode = 7,
+        RLCrawlControlMode  = 8,
     };
 
     enum StateName{
@@ -25,7 +26,8 @@ namespace types{
         kStandUp      = 1,
         kJointDamping = 2,
         kRLControl    = 6,
-        kRLSensorControl = 7,    // <--- 新增：带感知的状态名称
+        kRLSensorControl = 7,
+        kRLCrawlControl  = 8,
     };
 
     enum RemoteCommandType{

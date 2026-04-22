@@ -20,6 +20,7 @@
 #include "joy_interface.h"
 #include "hardware/m20_interface.hpp"
 #include "rl_sensor_control_state.hpp"
+#include "rl_crawl_control_state.hpp"
 
 
 namespace qw{
@@ -30,6 +31,7 @@ private:
     std::shared_ptr<StateBase> standup_controller_;
     std::shared_ptr<StateBase> rl_controller_;
     std::shared_ptr<StateBase> rl_sensor_controller_;
+    std::shared_ptr<StateBase> rl_crawl_controller_;
     std::shared_ptr<StateBase> joint_damping_controller_;
     std::shared_ptr<StateBase> car_move_controller_;
 
@@ -73,6 +75,7 @@ public:
         standup_controller_ = std::make_shared<StandUpState>(robot_name_, "standup_state", data_ptr);
         rl_controller_ = std::make_shared<RLControlState>(robot_name_, "rl_control", data_ptr);
         rl_sensor_controller_ = std::make_shared<RLSensorControlState>(robot_name_, "rl_sensor_control", data_ptr);
+        rl_crawl_controller_ = std::make_shared<RLCrawlControlState>(robot_name_, "rl_crawl_control", data_ptr);
         joint_damping_controller_ = std::make_shared<JointDampingState>(robot_name_, "joint_damping", data_ptr);
 
         current_controller_ = idle_controller_;
@@ -102,6 +105,9 @@ public:
             }
             case StateName::kRLSensorControl:{
                 return rl_sensor_controller_;
+            }
+            case StateName::kRLCrawlControl:{
+                return rl_crawl_controller_;
             }
             case StateName::kJointDamping:{
                 return joint_damping_controller_;

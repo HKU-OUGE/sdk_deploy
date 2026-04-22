@@ -14,6 +14,9 @@
 #include "common_types.h"
 #include "basic_function.hpp"
 #include "onnxruntime_cxx_api.h"
+#include "json.hpp"
+#include <fstream>
+#include <filesystem>
 
 using namespace types;
 
@@ -50,9 +53,43 @@ public:
         decimation_ = d;
     }
 
+    void LoadVelocityConfig(const std::string& policy_path) {
+        namespace fs = std::filesystem;
+        fs::path json_path = fs::path(policy_path).replace_extension(".json");
+        std::ifstream f(json_path.string());
+        if (f.is_open()) {
+            try {
+                nlohmann::json j;
+                f >> j;
+                if (j.contains("max_lin_vel_x")) max_lin_vel_x_ = j["max_lin_vel_x"];
+                if (j.contains("max_lin_vel_y")) max_lin_vel_y_ = j["max_lin_vel_y"];
+                if (j.contains("max_ang_vel_z")) max_ang_vel_z_ = j["max_ang_vel_z"];
+                std::cout << "[VelConfig] Loaded from: " << json_path.string()
+                          << " -> vx=" << max_lin_vel_x_ << " vy=" << max_lin_vel_y_
+                          << " wz=" << max_ang_vel_z_ << std::endl;
+            } catch (const std::exception& e) {
+                std::cerr << "[VelConfig] JSON parse error: " << e.what()
+                          << ", using defaults." << std::endl;
+            }
+        } else {
+            std::cout << "[VelConfig] No config found: " << json_path.string()
+                      << ", using defaults (vx=" << max_lin_vel_x_
+                      << " vy=" << max_lin_vel_y_ << " wz=" << max_ang_vel_z_ << ")" << std::endl;
+        }
+    }
+
+    Vec3f ClampCommand(const Vec3f& cmd) const {
+        return Vec3f(
+            std::clamp(cmd(0), -max_lin_vel_x_, max_lin_vel_x_),
+            std::clamp(cmd(1), -max_lin_vel_y_, max_lin_vel_y_),
+            std::clamp(cmd(2), -max_ang_vel_z_, max_ang_vel_z_)
+        );
+    }
+
     const std::string policy_name_;
     int decimation_;
     int run_cnt_;
     Vec3f vel_delta_const_, cmd_vel_input_;
+    float max_lin_vel_x_ = 1.5f, max_lin_vel_y_ = 0.5f, max_ang_vel_z_ = 1.5f;
 };
 

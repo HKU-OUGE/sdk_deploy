@@ -65,9 +65,10 @@ private:
     const int RAW_BTN_B = 1;
     const int RAW_BTN_X = 2;
     const int RAW_BTN_Y = 3;
+    const int RAW_BTN_LB = 4;
 
     float max_forward_ = 1.5f;
-    float max_side_    = 0.0f;
+    float max_side_    = 1.0f;
     float max_yaw_     = 1.5f;
 
     float normalize_axis(int val) {
@@ -229,9 +230,13 @@ private:
             else if (button_values_[RAW_BTN_Y]) {
                 usr_cmd_->target_mode = uint8_t(RobotMotionState::RLSensorControlMode);
             }
+            else if (button_values_[RAW_BTN_LB]) {
+                usr_cmd_->target_mode = uint8_t(RobotMotionState::RLCrawlControlMode);
+            }
 
             if (msfb_->GetCurrentState() == RobotMotionState::RLControlMode ||
-                msfb_->GetCurrentState() == RobotMotionState::RLSensorControlMode) {
+                msfb_->GetCurrentState() == RobotMotionState::RLSensorControlMode ||
+                msfb_->GetCurrentState() == RobotMotionState::RLCrawlControlMode) {
 
                 float stick_fwd  = -normalize_axis(axis_values_[RAW_AXIS_LY]);
                 float stick_side = -normalize_axis(axis_values_[RAW_AXIS_LX]);

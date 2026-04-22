@@ -1,24 +1,24 @@
 /**
- * @file rl_sensor_control_state.hpp
- * @brief rl policy running state for quadruped-wheel robot (Sensor-based Framework)
+ * @file rl_crawl_control_state.hpp
+ * @brief rl policy running state for quadruped-wheel robot (Crawl mode, sensor-based)
  */
 #pragma once
 #include "state_base.h"
 #include "policy_runner_base.hpp"
-#include "m20_sensor_policy_runner.hpp" // [修改 1] 引入新的带感知的 Runner 头文件
+#include "m20_sensor_policy_runner.hpp"
 #include "robot_interface.h"
 #include "user_command_interface.h"
 #include "json.hpp"
 #include "basic_function.hpp"
 
 namespace qw {
-    class RLSensorControlState : public StateBase {
+    class RLCrawlControlState : public StateBase {
     private:
         RobotBasicState rbs_;
         int state_run_cnt_;
 
         std::shared_ptr<PolicyRunnerBase> policy_ptr_;
-        std::shared_ptr<M20SensorPolicyRunner> m20_policy_; // [修改 2] 实例化带感知的 Runner
+        std::shared_ptr<M20SensorPolicyRunner> m20_policy_;
 
         std::thread run_policy_thread_;
         bool start_flag_ = true;
@@ -70,16 +70,15 @@ namespace qw {
         }
 
     public:
-        RLSensorControlState(const RobotName &robot_name, const std::string &state_name,
+        RLCrawlControlState(const RobotName &robot_name, const std::string &state_name,
                        std::shared_ptr<ControllerData> data_ptr) : StateBase(robot_name, state_name, data_ptr) {
-            // std::memset(&rbs_, 0, sizeof(rbs_));
 
             if (robot_name_ == RobotName::M20) {
                 namespace fs = std::filesystem;
                 fs::path base = fs::path(__FILE__).parent_path();
 
-                auto model_path = fs::canonical(base / ".." / ".." / "policy" / "unified_policy.onnx");
-                m20_policy_ = std::make_shared<M20SensorPolicyRunner>("m20_sensor_policy", model_path.string());
+                auto model_path = fs::canonical(base / ".." / ".." / "policy" / "crawl_unified_policy.onnx");
+                m20_policy_ = std::make_shared<M20SensorPolicyRunner>("m20_crawl_policy", model_path.string());
             }
 
             policy_ptr_ = m20_policy_;
@@ -91,35 +90,30 @@ namespace qw {
             init_rbs_();
         }
 
-        ~RLSensorControlState() {}
+        ~RLCrawlControlState() {}
 
         virtual void OnEnter() {
             state_run_cnt_ = -1;
             start_flag_ = true;
 
-            // 获取机器人当前稳定的站立物理状态
             UpdateRobotObservation();
-            
+
             policy_ptr_->OnEnter(rbs_);
 
-            // ================== 网络预热 (Network Warm-up) ==================
-            std::cout << "[RLSensor] 开始网络预热 (Network Warm-up 50 frames)..." << std::endl;
-            
-            // 构造一个绝对静止的摇杆指令
+            std::cout << "[RLCrawl] 开始网络预热 (Network Warm-up 150 frames)..." << std::endl;
+
             UserCommand zero_cmd = *(uc_ptr_->GetUserCommand());
             zero_cmd.forward_vel_scale = 0.0f;
             zero_cmd.side_vel_scale = 0.0f;
             zero_cmd.turnning_vel_scale = 0.0f;
 
-            // 在不发送给电机的情况下，让网络连续空跑 50 次，使得 GRU 隐状态完全收敛
             for (int i = 0; i < 150; ++i) {
                 policy_ptr_->getRobotAction(rbs_, zero_cmd);
             }
-            std::cout << "[RLSensor] 网络预热完成！隐藏状态已收敛。" << std::endl;
-            // =========================================================================
+            std::cout << "[RLCrawl] 网络预热完成！隐藏状态已收敛。" << std::endl;
 
-            run_policy_thread_ = std::thread(std::bind(&RLSensorControlState::PolicyRunner, this));
-            StateBase::msfb_.UpdateCurrentState(RobotMotionState::RLSensorControlMode);
+            run_policy_thread_ = std::thread(std::bind(&RLCrawlControlState::PolicyRunner, this));
+            StateBase::msfb_.UpdateCurrentState(RobotMotionState::RLCrawlControlMode);
         };
 
         virtual void OnExit() {
@@ -148,9 +142,9 @@ namespace qw {
 
             if (uc_ptr_->GetUserCommand()->target_mode == uint8_t(RobotMotionState::StandingUp)) return StateName::kStandUp;
             if (uc_ptr_->GetUserCommand()->target_mode == uint8_t(RobotMotionState::RLControlMode)) return StateName::kRLControl;
-            if (uc_ptr_->GetUserCommand()->target_mode == uint8_t(RobotMotionState::RLCrawlControlMode)) return StateName::kRLCrawlControl;
+            if (uc_ptr_->GetUserCommand()->target_mode == uint8_t(RobotMotionState::RLSensorControlMode)) return StateName::kRLSensorControl;
 
-            return StateName::kRLSensorControl;
+            return StateName::kRLCrawlControl;
         }
     };
 };
