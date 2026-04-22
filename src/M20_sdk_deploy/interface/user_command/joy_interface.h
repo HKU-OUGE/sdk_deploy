@@ -71,6 +71,8 @@ private:
     float max_side_    = 1.0f;
     float max_yaw_     = 1.5f;
 
+    uint8_t prev_target_mode_ = 255;
+
     float normalize_axis(int val) {
         const int deadzone = 4000;
         if (std::abs(val) < deadzone) return 0.0f;
@@ -232,6 +234,19 @@ private:
             }
             else if (button_values_[RAW_BTN_LB]) {
                 usr_cmd_->target_mode = uint8_t(RobotMotionState::RLCrawlControlMode);
+            }
+
+            if (usr_cmd_->target_mode != prev_target_mode_) {
+                const char* mode_name = "Unknown";
+                switch (usr_cmd_->target_mode) {
+                    case uint8_t(RobotMotionState::JointDamping):       mode_name = "Joint Damping"; break;
+                    case uint8_t(RobotMotionState::StandingUp):         mode_name = "Standing Up"; break;
+                    case uint8_t(RobotMotionState::RLControlMode):      mode_name = "RL Blind"; break;
+                    case uint8_t(RobotMotionState::RLSensorControlMode): mode_name = "RL Sensor"; break;
+                    case uint8_t(RobotMotionState::RLCrawlControlMode): mode_name = "RL Crawl"; break;
+                }
+                std::cout << "\033[1;35m[MODE]\033[0m " << mode_name << std::endl;
+                prev_target_mode_ = usr_cmd_->target_mode;
             }
 
             if (msfb_->GetCurrentState() == RobotMotionState::RLControlMode ||

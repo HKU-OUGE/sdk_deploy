@@ -127,10 +127,11 @@ public:
                 }
 
                 if (next_state_name_ != current_state_name_) {
+                    std::string from_name = current_controller_->state_name_;
                     current_controller_->OnExit();
-                    std::cout << current_controller_->state_name_ << " ------------> ";
                     current_controller_ = GetStateControllerPtr(next_state_name_);
-                    std::cout << current_controller_->state_name_ << std::endl;
+                    std::cout << "\033[1;36m[FSM]\033[0m " << from_name
+                              << " \033[1;33m──▶\033[0m " << current_controller_->state_name_ << std::endl;
                     current_controller_->OnEnter();
                     current_state_name_ = next_state_name_;
                 }

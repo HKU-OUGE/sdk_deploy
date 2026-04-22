@@ -17,6 +17,8 @@
 #include "json.hpp"
 #include <fstream>
 #include <filesystem>
+#include <sstream>
+#include <iomanip>
 
 using namespace types;
 
@@ -91,5 +93,86 @@ public:
     int run_cnt_;
     Vec3f vel_delta_const_, cmd_vel_input_;
     float max_lin_vel_x_ = 1.5f, max_lin_vel_y_ = 0.5f, max_ang_vel_z_ = 1.5f;
+
+protected:
+    int dashboard_lines_ = 0;
+
+    struct DebugState {
+        float robot_x = 0, robot_y = 0, robot_z = 0, robot_yaw = 0;
+        bool tf_valid = false;
+        bool has_map = false;
+        int valid_h_count = 0;
+        float hole_ratio_pct = 0;
+        float min_fwd = 5.0f, min_bwd = 5.0f;
+        float cmd_vx = 0, cmd_vy = 0, cmd_wz = 0;
+        float fk_z = 0, z_error = 0;
+        bool has_fk = false;
+    } dbg_;
+
+    void PrintDebugDashboard(const char* mode_label, int step) {
+        std::ostringstream os;
+        os << std::fixed;
+
+        if (dashboard_lines_ > 0) {
+            os << "\033[" << dashboard_lines_ << "A\r";
+        }
+
+        int lines = 0;
+
+        os << "\033[36m─── M20 RL [\033[1m" << mode_label
+           << "\033[0;36m] ── Step " << step
+           << " ──────────────────────────────────\033[0m\033[K\n";
+        lines++;
+
+        os << "  \033[1mPose\033[0m   X:" << std::setprecision(2) << std::setw(7) << dbg_.robot_x
+           << "  Y:" << std::setw(7) << dbg_.robot_y
+           << "  Z:" << std::setw(6) << dbg_.robot_z
+           << "  Yaw:" << std::setw(6) << dbg_.robot_yaw;
+        if (dbg_.has_map)
+            os << (dbg_.tf_valid ? "  \033[32m[TF]\033[0m" : "  \033[33m[Map]\033[0m");
+        os << "\033[K\n";
+        lines++;
+
+        os << "  \033[1mCmd\033[0m    Vx:" << std::setprecision(2) << std::setw(6) << dbg_.cmd_vx
+           << "  Vy:" << std::setw(6) << dbg_.cmd_vy
+           << "  Wz:" << std::setw(6) << dbg_.cmd_wz
+           << "\033[K\n";
+        lines++;
+
+        os << "  \033[1mMap\033[0m    ";
+        if (dbg_.has_map) {
+            float pct = dbg_.hole_ratio_pct;
+            const char* color = pct > 50.0f ? "\033[33m" : "\033[0m";
+            os << "Holes:" << color << std::setprecision(1) << std::setw(5) << pct << "%\033[0m"
+               << "  Valid: " << dbg_.valid_h_count << "/187";
+        } else {
+            os << "\033[90m-- waiting --\033[0m";
+        }
+        os << "\033[K\n";
+        lines++;
+
+        os << "  \033[1mLidar\033[0m  fwd:" << std::setprecision(2) << std::setw(5) << dbg_.min_fwd
+           << "m  bwd:" << std::setw(5) << dbg_.min_bwd << "m\033[K\n";
+        lines++;
+
+        os << "  \033[1mFK\033[0m     ";
+        if (dbg_.has_fk) {
+            const char* color = std::abs(dbg_.z_error) > 0.05f ? "\033[33m" : "\033[32m";
+            os << "TF:" << std::setprecision(3) << std::setw(6) << dbg_.robot_z
+               << "  Est:" << std::setw(6) << dbg_.fk_z
+               << "  Err:" << color << std::showpos << std::setw(7) << dbg_.z_error
+               << std::noshowpos << "m\033[0m";
+        } else {
+            os << "\033[90m-- no TF data --\033[0m";
+        }
+        os << "\033[K\n";
+        lines++;
+
+        os << "\033[36m──────────────────────────────────────────────────────────────\033[0m\033[K\n";
+        lines++;
+
+        std::cout << os.str() << std::flush;
+        dashboard_lines_ = lines;
+    }
 };
 

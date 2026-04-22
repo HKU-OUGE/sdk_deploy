@@ -278,6 +278,8 @@ public:
         motor_v_eigen.setZero(motor_num);
 
         std::fill(hidden_state_data_.begin(), hidden_state_data_.end(), 0.0f);
+        dbg_ = DebugState{};
+        dashboard_lines_ = 0;
         std::cout << "[M20PolicyRunner] Reset hidden state & FSM buffers." << std::endl;
     }
 
@@ -395,9 +397,12 @@ public:
 
 
             if (run_cnt_ % 50 == 0) {
-                std::cout << "🎯 [Shadow Bypass TF] Robot Pose -> X: " << robot_x 
-                          << " | Y: " << robot_y 
-                          << " | Z: " << robot_z << std::endl;
+                dbg_.robot_x = robot_x;
+                dbg_.robot_y = robot_y;
+                dbg_.robot_z = robot_z;
+                dbg_.robot_yaw = robot_yaw;
+                dbg_.tf_valid = tf_valid;
+                dbg_.has_map = true;
             }
         }
 
@@ -438,9 +443,9 @@ public:
             if (valid_feet_count > 0) {
                 float est_z = estimated_z_sum / valid_feet_count;
                 float z_error = robot_z - est_z;
-                std::cout << "📐 [运动学验证] TF真实Z: " << std::fixed << std::setprecision(3) << robot_z 
-                          << " | 运动学估计Z: " << est_z 
-                          << " | 误差: " << z_error << " m" << std::endl;
+                dbg_.fk_z = est_z;
+                dbg_.z_error = z_error;
+                dbg_.has_fk = true;
             }
         }
         // ==========================================================
@@ -486,8 +491,10 @@ public:
             float hole_ratio_pct = (187.0f - valid_h_count) / 187.0f * 100.0f;
 
             if (run_cnt_ % 50 == 0) {
-                std::cout << "[Shadow Perception] 后台高程图空洞占比: " 
-                          << std::fixed << std::setprecision(1) << hole_ratio_pct << "%" << std::endl;
+                dbg_.hole_ratio_pct = hole_ratio_pct;
+                dbg_.valid_h_count = valid_h_count;
+                dbg_.min_fwd = min_fwd;
+                dbg_.min_bwd = min_bwd;
             }
             data_log_file_ << run_cnt_ << "," << getCurrentTime() << ","
                            << robot_x << "," << robot_y << "," << robot_z << "," << robot_yaw << ","
@@ -541,6 +548,13 @@ public:
         // === 触发影子模式：记录所有数据到本地 csv，不影响盲步控制 ===
         // ====================================================================
         CollectShadowPerceptionData(ro);
+
+        dbg_.cmd_vx = command(0);
+        dbg_.cmd_vy = command(1);
+        dbg_.cmd_wz = command(2);
+        if (run_cnt_ % 50 == 0) {
+            PrintDebugDashboard("Blind", run_cnt_);
+        }
 
         ++run_cnt_;
         ++time_step;
