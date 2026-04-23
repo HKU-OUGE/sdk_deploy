@@ -66,6 +66,8 @@ private:
     const int RAW_BTN_X = 2;
     const int RAW_BTN_Y = 3;
     const int RAW_BTN_LB = 4;
+    const int RAW_BTN_RB = 5;
+    const int RAW_BTN_BACK = 6;
 
     float max_forward_ = 1.5f;
     float max_side_    = 1.0f;
@@ -235,6 +237,12 @@ private:
             else if (button_values_[RAW_BTN_LB]) {
                 usr_cmd_->target_mode = uint8_t(RobotMotionState::RLCrawlControlMode);
             }
+            else if (button_values_[RAW_BTN_RB]) {
+                usr_cmd_->target_mode = uint8_t(RobotMotionState::RLPlatformControlMode);
+            }
+            else if (button_values_[RAW_BTN_BACK]) {
+                usr_cmd_->target_mode = uint8_t(RobotMotionState::RLGapControlMode);
+            }
 
             if (usr_cmd_->target_mode != prev_target_mode_) {
                 const char* mode_name = "Unknown";
@@ -244,6 +252,8 @@ private:
                     case uint8_t(RobotMotionState::RLControlMode):      mode_name = "RL Blind"; break;
                     case uint8_t(RobotMotionState::RLSensorControlMode): mode_name = "RL Sensor"; break;
                     case uint8_t(RobotMotionState::RLCrawlControlMode): mode_name = "RL Crawl"; break;
+                    case uint8_t(RobotMotionState::RLPlatformControlMode): mode_name = "RL Platform"; break;
+                    case uint8_t(RobotMotionState::RLGapControlMode): mode_name = "RL Gap"; break;
                 }
                 std::cout << "\033[1;35m[MODE]\033[0m " << mode_name << std::endl;
                 prev_target_mode_ = usr_cmd_->target_mode;
@@ -251,7 +261,9 @@ private:
 
             if (msfb_->GetCurrentState() == RobotMotionState::RLControlMode ||
                 msfb_->GetCurrentState() == RobotMotionState::RLSensorControlMode ||
-                msfb_->GetCurrentState() == RobotMotionState::RLCrawlControlMode) {
+                msfb_->GetCurrentState() == RobotMotionState::RLCrawlControlMode ||
+                msfb_->GetCurrentState() == RobotMotionState::RLPlatformControlMode ||
+                msfb_->GetCurrentState() == RobotMotionState::RLGapControlMode) {
 
                 float stick_fwd  = -normalize_axis(axis_values_[RAW_AXIS_LY]);
                 float stick_side = -normalize_axis(axis_values_[RAW_AXIS_LX]);

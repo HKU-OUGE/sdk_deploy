@@ -106,6 +106,14 @@ private:
             usr_cmd_->target_mode = uint8_t(RobotMotionState::RLControlMode);
             std::cout << "[MODE] RL Control\n";
         }
+        else if (keycode == KEY_V && msfb_->GetCurrentState() == RobotMotionState::StandingUp) {
+            usr_cmd_->target_mode = uint8_t(RobotMotionState::RLPlatformControlMode);
+            std::cout << "[MODE] RL Platform\n";
+        }
+        else if (keycode == KEY_B && msfb_->GetCurrentState() == RobotMotionState::StandingUp) {
+            usr_cmd_->target_mode = uint8_t(RobotMotionState::RLGapControlMode);
+            std::cout << "[MODE] RL Gap\n";
+        }
     }
 
     bool init_all_keyboards()
@@ -229,7 +237,9 @@ private:
                 std::chrono::steady_clock::now().time_since_epoch()).count() / 1000.0;
 
             // Optional nice live display
-            if (msfb_->GetCurrentState() == RobotMotionState::RLControlMode) {
+            if (msfb_->GetCurrentState() == RobotMotionState::RLControlMode ||
+                msfb_->GetCurrentState() == RobotMotionState::RLPlatformControlMode ||
+                msfb_->GetCurrentState() == RobotMotionState::RLGapControlMode) {
                 std::cout << "\rvel: " << fwd << "  " << side << "  " << yaw << std::flush;
             }
 

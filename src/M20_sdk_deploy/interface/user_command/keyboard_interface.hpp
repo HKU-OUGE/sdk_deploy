@@ -105,6 +105,14 @@ private:
             usr_cmd_->target_mode = uint8_t(RobotMotionState::RLControlMode);
             std::cout << "[MODE] RL Control\n";
         }
+        else if (k == 'v' && msfb_->GetCurrentState() == RobotMotionState::StandingUp) {
+            usr_cmd_->target_mode = uint8_t(RobotMotionState::RLPlatformControlMode);
+            std::cout << "[MODE] RL Platform\n";
+        }
+        else if (k == 'b' && msfb_->GetCurrentState() == RobotMotionState::StandingUp) {
+            usr_cmd_->target_mode = uint8_t(RobotMotionState::RLGapControlMode);
+            std::cout << "[MODE] RL Gap\n";
+        }
     }
 
     void keyboard_loop()
@@ -116,7 +124,7 @@ private:
                   << "╚════════════════════════════════════════════════╝\n"
                   << "  Movement:  W/S (forward/back)  A/D (left/right)\n"
                   << "  Rotation:  Q (CCW)  E (CW)\n"
-                  << "  Mode:      R (damping)  Z (stand)  C (control)\n"
+                  << "  Mode:      R (damping)  Z (stand)  C (control)  V (platform)  B (gap)\n"
                   << "\n";
 
         char ch;
@@ -130,7 +138,7 @@ private:
                 char k = std::tolower(static_cast<unsigned char>(ch));
 
                 // Handle mode commands
-                if (k == 'r' || k == 'z' || k == 'c') {
+                if (k == 'r' || k == 'z' || k == 'c' || k == 'v' || k == 'b') {
                     process_mode_command(k);
                     continue;
                 }
@@ -163,7 +171,9 @@ private:
             // Compute velocity from all currently held keys
             float fwd = 0.0f, side = 0.0f, yaw = 0.0f;
             
-            if (msfb_->GetCurrentState() == RobotMotionState::RLControlMode) {
+            if (msfb_->GetCurrentState() == RobotMotionState::RLControlMode ||
+                msfb_->GetCurrentState() == RobotMotionState::RLPlatformControlMode ||
+                msfb_->GetCurrentState() == RobotMotionState::RLGapControlMode) {
                 compute_velocity_from_held_keys(fwd, side, yaw);
             }
             

@@ -1,6 +1,6 @@
 /**
- * @file rl_crawl_control_state.hpp
- * @brief rl policy running state for quadruped-wheel robot (Crawl mode, sensor-based)
+ * @file rl_platform_control_state.hpp
+ * @brief rl policy running state for quadruped-wheel robot (Platform mode, sensor-based)
  */
 #pragma once
 #include "state_base.h"
@@ -12,7 +12,7 @@
 #include "basic_function.hpp"
 
 namespace qw {
-    class RLCrawlControlState : public StateBase {
+    class RLPlatformControlState : public StateBase {
     private:
         RobotBasicState rbs_;
         int state_run_cnt_;
@@ -70,15 +70,15 @@ namespace qw {
         }
 
     public:
-        RLCrawlControlState(const RobotName &robot_name, const std::string &state_name,
+        RLPlatformControlState(const RobotName &robot_name, const std::string &state_name,
                        std::shared_ptr<ControllerData> data_ptr) : StateBase(robot_name, state_name, data_ptr) {
 
             if (robot_name_ == RobotName::M20) {
                 namespace fs = std::filesystem;
                 fs::path base = fs::path(__FILE__).parent_path();
 
-                auto model_path = fs::canonical(base / ".." / ".." / "policy" / "crawl_unified_policy.onnx");
-                m20_policy_ = std::make_shared<M20SensorPolicyRunner>("m20_crawl_policy", model_path.string());
+                auto model_path = fs::canonical(base / ".." / ".." / "policy" / "platform_unified_policy.onnx");
+                m20_policy_ = std::make_shared<M20SensorPolicyRunner>("m20_platform_policy", model_path.string());
             }
 
             policy_ptr_ = m20_policy_;
@@ -90,7 +90,7 @@ namespace qw {
             init_rbs_();
         }
 
-        ~RLCrawlControlState() {}
+        ~RLPlatformControlState() {}
 
         virtual void OnEnter() {
             state_run_cnt_ = -1;
@@ -100,7 +100,7 @@ namespace qw {
 
             policy_ptr_->OnEnter(rbs_);
 
-            std::cout << "[RLCrawl] 开始网络预热 (Network Warm-up 150 frames)..." << std::endl;
+            std::cout << "[RLPlatform] 开始网络预热 (Network Warm-up 150 frames)..." << std::endl;
 
             UserCommand zero_cmd = *(uc_ptr_->GetUserCommand());
             zero_cmd.forward_vel_scale = 0.0f;
@@ -110,10 +110,10 @@ namespace qw {
             for (int i = 0; i < 150; ++i) {
                 policy_ptr_->getRobotAction(rbs_, zero_cmd);
             }
-            std::cout << "[RLCrawl] 网络预热完成！隐藏状态已收敛。" << std::endl;
+            std::cout << "[RLPlatform] 网络预热完成！隐藏状态已收敛。" << std::endl;
 
-            run_policy_thread_ = std::thread(std::bind(&RLCrawlControlState::PolicyRunner, this));
-            StateBase::msfb_.UpdateCurrentState(RobotMotionState::RLCrawlControlMode);
+            run_policy_thread_ = std::thread(std::bind(&RLPlatformControlState::PolicyRunner, this));
+            StateBase::msfb_.UpdateCurrentState(RobotMotionState::RLPlatformControlMode);
         };
 
         virtual void OnExit() {
@@ -143,10 +143,10 @@ namespace qw {
             if (uc_ptr_->GetUserCommand()->target_mode == uint8_t(RobotMotionState::StandingUp)) return StateName::kStandUp;
             if (uc_ptr_->GetUserCommand()->target_mode == uint8_t(RobotMotionState::RLControlMode)) return StateName::kRLControl;
             if (uc_ptr_->GetUserCommand()->target_mode == uint8_t(RobotMotionState::RLSensorControlMode)) return StateName::kRLSensorControl;
-            if (uc_ptr_->GetUserCommand()->target_mode == uint8_t(RobotMotionState::RLPlatformControlMode)) return StateName::kRLPlatformControl;
+            if (uc_ptr_->GetUserCommand()->target_mode == uint8_t(RobotMotionState::RLCrawlControlMode)) return StateName::kRLCrawlControl;
             if (uc_ptr_->GetUserCommand()->target_mode == uint8_t(RobotMotionState::RLGapControlMode)) return StateName::kRLGapControl;
 
-            return StateName::kRLCrawlControl;
+            return StateName::kRLPlatformControl;
         }
     };
 };

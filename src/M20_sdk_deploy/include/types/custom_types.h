@@ -18,6 +18,8 @@ namespace types{
         RLControlMode   = 6,
         RLSensorControlMode = 7,
         RLCrawlControlMode  = 8,
+        RLPlatformControlMode = 9,
+        RLGapControlMode = 10,
     };
 
     enum StateName{
@@ -28,6 +30,8 @@ namespace types{
         kRLControl    = 6,
         kRLSensorControl = 7,
         kRLCrawlControl  = 8,
+        kRLPlatformControl = 9,
+        kRLGapControl = 10,
     };
 
     enum RemoteCommandType{

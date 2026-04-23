@@ -143,18 +143,35 @@ class MujocoTerrainGenerator:
         self.add_platform(2.0)
 
     # 真实的悬空断崖 (Gap)
-    def add_gap(self, gap_length=1.0, double_gap=True, width=3.0):
-        print(f"Generating Real Gap (Empty space) at X > {self.current_x}...")
+    def add_gap(self, gap_length=1.0, gap_depth=0.5, double_gap=True, width=3.0):
+        print(f"Generating Gap (Width={gap_length}, Depth={gap_depth}) at X > {self.current_x}...")
         num_gaps = 2 if double_gap else 1
-        plat_len = 1.0 
-        
+        plat_len = 1.0
+
         for i in range(num_gaps):
+            # 坑底板
+            z_top_pit = self.track_z - gap_depth
+            ground_z = 0.0
+            if z_top_pit > ground_z:
+                h_pit = z_top_pit - ground_z
+                z_center_pit = ground_z + h_pit / 2.0
+                ET.SubElement(self.worldbody, "geom", type="box",
+                              pos=f"{self.current_x + gap_length/2:.3f} 0.0 {z_center_pit:.3f}",
+                              size=f"{gap_length/2:.3f} {width/2:.3f} {h_pit/2:.3f}", material="stone_mat")
+            else:
+                ET.SubElement(self.worldbody, "geom", type="box",
+                              pos=f"{self.current_x + gap_length/2:.3f} 0.0 {z_top_pit - 0.05:.3f}",
+                              size=f"{gap_length/2:.3f} {width/2:.3f} 0.05", material="stone_mat")
             self.current_x += gap_length
-            ET.SubElement(self.worldbody, "geom", type="box", 
-                          pos=f"{self.current_x + plat_len/2:.3f} 0.0 {self.track_z - 0.05:.3f}", 
-                          size=f"{plat_len/2:.3f} {width/2:.3f} 0.05", material="stone_mat")
+
+            # 中间平台
+            h_plat = self.track_z - ground_z
+            z_center_plat = ground_z + h_plat / 2.0
+            ET.SubElement(self.worldbody, "geom", type="box",
+                          pos=f"{self.current_x + plat_len/2:.3f} 0.0 {z_center_plat:.3f}",
+                          size=f"{plat_len/2:.3f} {width/2:.3f} {h_plat/2:.3f}", material="stone_mat")
             self.current_x += plat_len
-            
+
         self.add_platform(2.0)
 
     # 8 & 9. hf_pyramid_slope & hf_pyramid_slope_inv
@@ -259,7 +276,9 @@ if __name__ == "__main__":
     gen.add_slope(length=3.0, slope=0.4, inverted=False)
 
     # 4. pit
-    gen.add_pit(pit_depth=0.6, gap_length=2.0, double_pit=True)
+    gen.add_pit(pit_depth=0.2, gap_length=2.0, double_pit=False)
+    gen.add_pit(pit_depth=0.4, gap_length=2.0, double_pit=False)
+    gen.add_pit(pit_depth=0.6, gap_length=2.0, double_pit=False)
     # 5. Hurdle (跨栏)
     gen.add_hurdle(hurdle_height=0.2, width=3.0) 
     # 6. Hurdle (跨栏-钻)
@@ -267,5 +286,11 @@ if __name__ == "__main__":
     gen.add_hurdle(hurdle_height=0.5, bar_thickness=0.2)
     gen.add_hurdle(hurdle_height=0.4, bar_thickness=0.2)
     gen.add_hurdle(hurdle_height=0.35, bar_thickness=0.2)
-    gen.add_hurdle(hurdle_height=0.3, bar_thickness=0.2)
+
+    # 7. Gap 地形 (4种不同宽度)
+    gen.add_gap(gap_length=0.2, gap_depth=0.3, double_gap=False)
+    gen.add_gap(gap_length=0.4, gap_depth=0.5, double_gap=False)
+    gen.add_gap(gap_length=0.6, gap_depth=0.7, double_gap=False)
+    gen.add_gap(gap_length=0.8, gap_depth=1.0, double_gap=False)
+
     gen.save()
