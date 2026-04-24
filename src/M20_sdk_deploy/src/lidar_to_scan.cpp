@@ -95,8 +95,8 @@ private:
         }
 
         // ================= 极近盲区处理 =================
-        for (auto& val : fwd_bins) { if (val < 0.2f) val = -1.0f; }
-        for (auto& val : bwd_bins) { if (val < 0.2f) val = -1.0f; }
+        for (auto& val : fwd_bins) { if (val < 0.3f) val = -1.0f; }
+        for (auto& val : bwd_bins) { if (val < 0.3f) val = -1.0f; }
 
         // ================= 发布数据 =================
         std_msgs::msg::Float32MultiArray array_msg;

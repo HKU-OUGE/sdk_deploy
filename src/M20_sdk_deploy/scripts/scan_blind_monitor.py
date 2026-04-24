@@ -35,7 +35,7 @@ class ScanBlindMonitor(Node):
     def __init__(self):
         super().__init__("scan_blind_monitor")
 
-        self.declare_parameter("threshold", 0.2)
+        self.declare_parameter("threshold", 0.3)
         self.declare_parameter("refresh_rate", 2.0)
 
         self.threshold = self.get_parameter("threshold").value

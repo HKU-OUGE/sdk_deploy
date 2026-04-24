@@ -400,8 +400,8 @@ class MuJoCoSimulationNode(Node):
                 cos_p = math.cos(pitch_rad)
                 for j, y in enumerate(y_offsets):
                     r = fwd_bins[i, j]
-                    # 剔除盲区(-1.0)和最大量程(5.0)，只渲染有效击中的点
-                    if 0.2 <= r < 5.0: 
+                    # 剔除盲区和最大量程(5.0)，只渲染有效击中的点
+                    if 0.3 <= r < 5.0: 
                         val = r**2 - y**2
                         if val > 0:
                             x_local = math.sqrt(val) * cos_p
@@ -416,7 +416,7 @@ class MuJoCoSimulationNode(Node):
                 cos_p = math.cos(pitch_rad)
                 for j, y in enumerate(y_offsets):
                     r = bwd_bins[i, j]
-                    if 0.2 <= r < 5.0:
+                    if 0.3 <= r < 5.0:
                         val = r**2 - y**2
                         if val > 0:
                             x_local = math.sqrt(val) * cos_p

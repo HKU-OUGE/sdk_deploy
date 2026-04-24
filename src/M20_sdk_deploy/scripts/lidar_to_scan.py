@@ -101,8 +101,8 @@ class LidarToScanArrayNode(Node):
                     np.minimum.at(bwd_bins[i], bin_y_bwd[idx], r_bwd[idx])
 
         # ================= 极近盲区处理 =================
-        fwd_bins[fwd_bins < 0.2] = -1.0
-        bwd_bins[bwd_bins < 0.2] = -1.0
+        fwd_bins[fwd_bins < 0.3] = -1.0
+        bwd_bins[bwd_bins < 0.3] = -1.0
 
         # ================= 发布轻量数组 =================
         array_msg = Float32MultiArray()

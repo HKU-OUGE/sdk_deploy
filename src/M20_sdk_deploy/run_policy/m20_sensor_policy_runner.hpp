@@ -269,7 +269,7 @@ public:
         env_idx += 187;
 
         auto map_scan_fn = [](float d) {
-            if (d < 0.2f) return -1.0f;
+            if (d < 0.3f) return -1.0f;
             return std::clamp(d / 5.0f, 0.0f, 1.0f);
         };
 

@@ -270,22 +270,22 @@ if __name__ == "__main__":
     gen = MujocoTerrainGenerator("m20_terrain.xml")
     
     # 1. pyramid_stairs (正向楼梯)
-    gen.add_stairs(steps=4, step_run=0.3, step_rise=0.15, inverted=False)
+    # gen.add_stairs(steps=4, step_run=0.3, step_rise=0.15, inverted=False)
     
-    # 3. hf_pyramid_slope
-    gen.add_slope(length=3.0, slope=0.4, inverted=False)
+    # # 3. hf_pyramid_slope
+    # gen.add_slope(length=3.0, slope=0.4, inverted=False)
 
-    # 4. pit
-    gen.add_pit(pit_depth=0.2, gap_length=2.0, double_pit=False)
-    gen.add_pit(pit_depth=0.4, gap_length=2.0, double_pit=False)
-    gen.add_pit(pit_depth=0.6, gap_length=2.0, double_pit=False)
-    # 5. Hurdle (跨栏)
-    gen.add_hurdle(hurdle_height=0.2, width=3.0) 
+    # # 4. pit
+    # gen.add_pit(pit_depth=0.2, gap_length=2.0, double_pit=False)
+    # gen.add_pit(pit_depth=0.4, gap_length=2.0, double_pit=False)
+    # gen.add_pit(pit_depth=0.6, gap_length=2.0, double_pit=False)
+    # # 5. Hurdle (跨栏)
+    # gen.add_hurdle(hurdle_height=0.2, width=3.0) 
     # 6. Hurdle (跨栏-钻)
     # gen.add_hurdle(hurdle_height=0.6, width=3.0)
-    gen.add_hurdle(hurdle_height=0.5, bar_thickness=0.2)
-    gen.add_hurdle(hurdle_height=0.4, bar_thickness=0.2)
-    gen.add_hurdle(hurdle_height=0.35, bar_thickness=0.2)
+    gen.add_hurdle(hurdle_height=0.5, bar_thickness=1.0, width = 5.0)
+    gen.add_hurdle(hurdle_height=0.4, bar_thickness=1.0, width = 5.0)
+    gen.add_hurdle(hurdle_height=0.35, bar_thickness=1.0, width = 5.0)
 
     # 7. Gap 地形 (4种不同宽度)
     gen.add_gap(gap_length=0.2, gap_depth=0.3, double_gap=False)
