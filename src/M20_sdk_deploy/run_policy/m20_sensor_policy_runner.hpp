@@ -116,8 +116,8 @@ public:
         estimator_history_data_.resize(estimator_dim_, 0.0f);
         hidden_state_data_.resize(hidden_dim_, 0.0f);
         
-        fwd_scan_bins_.resize(126, 5.0f); 
-        bwd_scan_bins_.resize(126, 5.0f);
+        fwd_scan_bins_.resize(126, 2.5f);
+        bwd_scan_bins_.resize(126, 2.5f);
 
         for (int i = 0; i < history_len_; ++i) {
             history_buffer_.push_back(std::vector<float>(proprio_dim_, 0.0f));
@@ -269,8 +269,10 @@ public:
         env_idx += 187;
 
         auto map_scan_fn = [](float d) {
-            if (d < 0.3f) return -1.0f;
-            return std::clamp(d / 5.0f, 0.0f, 1.0f);
+            // 与 sim multi_layer_scan 一致：盲区 (d < 0.3) 视为 no-hit → 归一化 1.0
+            // (lidar_to_scan 已把 < 0.3 替换成 2.5 max_distance, 这里是兜底)
+            if (d < 0.3f) return 1.0f;
+            return std::clamp(d / 2.5f, 0.0f, 1.0f);
         };
 
         for (int i = 0; i < 126; ++i) proprio_env_data_[env_idx++] = map_scan_fn(fwd_scan_126[i]);
@@ -511,8 +513,8 @@ public:
             }
         }
 
-        std::vector<float> curr_fwd_bins(126, 5.0f);
-        std::vector<float> curr_bwd_bins(126, 5.0f);
+        std::vector<float> curr_fwd_bins(126, 2.5f);
+        std::vector<float> curr_bwd_bins(126, 2.5f);
         {
             std::lock_guard<std::mutex> lock(scan_mutex_);
             if (scan_received_) {
@@ -523,7 +525,7 @@ public:
 
         // === 新增：将现成的感知数据写入 CSV（不影响推断速度） ===
         if (data_log_file_.is_open() && !is_offline_test_) {
-            float min_fwd = 5.0f, min_bwd = 5.0f;
+            float min_fwd = 2.5f, min_bwd = 2.5f;
             for(float d : curr_fwd_bins) min_fwd = std::min(min_fwd, d);
             for(float d : curr_bwd_bins) min_bwd = std::min(min_bwd, d);
 

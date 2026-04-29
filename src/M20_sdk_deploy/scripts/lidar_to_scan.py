@@ -19,7 +19,8 @@ class LidarToScanArrayNode(Node):
             Float32MultiArray, '/scan/multi_layer_features_array', 10)
 
         # 预先缓存常量
-        self.target_angles = np.array([-25.0, -15.0, -5.0, 5.0, 15.0, 25.0], dtype=np.float32)
+        # L5 (idx 5) 改为 50° 当贴脚悬崖探测器，与 sim down_angles_deg[5] 对齐
+        self.target_angles = np.array([-25.0, -15.0, -5.0, 5.0, 15.0, 50.0], dtype=np.float32)
         self.fwd_offset = np.array([0.32028, 0.0, -0.013], dtype=np.float32)
         self.bwd_offset = np.array([-0.32028, 0.0, -0.013], dtype=np.float32)
         self.angle_tol = 4.0
@@ -54,9 +55,9 @@ class LidarToScanArrayNode(Node):
         if len(points) == 0:
             return
 
-        # 准备 252 维容器 (初始化为最大距离 5.0)
-        fwd_bins = np.full((6, self.num_rays), 5.0, dtype=np.float32)
-        bwd_bins = np.full((6, self.num_rays), 5.0, dtype=np.float32)
+        # 准备 252 维容器 (初始化为最大距离 2.5)
+        fwd_bins = np.full((6, self.num_rays), 2.5, dtype=np.float32)
+        bwd_bins = np.full((6, self.num_rays), 2.5, dtype=np.float32)
 
         # ================= 前向处理 =================
         rel_fwd = points - self.fwd_offset
@@ -100,9 +101,9 @@ class LidarToScanArrayNode(Node):
                 if np.any(idx):
                     np.minimum.at(bwd_bins[i], bin_y_bwd[idx], r_bwd[idx])
 
-        # ================= 极近盲区处理 =================
-        fwd_bins[fwd_bins < 0.3] = -1.0
-        bwd_bins[bwd_bins < 0.3] = -1.0
+        # ================= 极近盲区处理 (与 sim multi_layer_scan 一致：blind = no-hit = max_distance) =================
+        fwd_bins[fwd_bins < 0.3] = 2.5
+        bwd_bins[bwd_bins < 0.3] = 2.5
 
         # ================= 发布轻量数组 =================
         array_msg = Float32MultiArray()

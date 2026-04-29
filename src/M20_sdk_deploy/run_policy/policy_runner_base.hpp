@@ -103,7 +103,7 @@ protected:
         bool has_map = false;
         int valid_h_count = 0;
         float hole_ratio_pct = 0;
-        float min_fwd = 5.0f, min_bwd = 5.0f;
+        float min_fwd = 2.5f, min_bwd = 2.5f;
         float cmd_vx = 0, cmd_vy = 0, cmd_wz = 0;
         float fk_z = 0, z_error = 0;
         bool has_fk = false;

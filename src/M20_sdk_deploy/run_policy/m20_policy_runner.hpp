@@ -213,8 +213,8 @@ public:
         // ====================================================================
         // === 初始化影子感知节点与接收队列 ===
         // ====================================================================
-        fwd_scan_bins_.resize(126, 5.0f);
-        bwd_scan_bins_.resize(126, 5.0f);
+        fwd_scan_bins_.resize(126, 2.5f);
+        bwd_scan_bins_.resize(126, 2.5f);
 
         ros_node_ = rclcpp::Node::make_shared("m20_shadow_perception_node");
         tf_buffer_ = std::make_shared<tf2_ros::Buffer>(ros_node_->get_clock());
@@ -472,8 +472,8 @@ public:
         }
 
         // 3. 雷达状态
-        std::vector<float> curr_fwd_bins(126, 5.0f);
-        std::vector<float> curr_bwd_bins(126, 5.0f);
+        std::vector<float> curr_fwd_bins(126, 2.5f);
+        std::vector<float> curr_bwd_bins(126, 2.5f);
         {
             std::lock_guard<std::mutex> lock(scan_mutex_);
             if (scan_received_) {
@@ -482,7 +482,7 @@ public:
             }
         }
 
-        float min_fwd = 5.0f, min_bwd = 5.0f;
+        float min_fwd = 2.5f, min_bwd = 2.5f;
         for(float d : curr_fwd_bins) min_fwd = std::min(min_fwd, d);
         for(float d : curr_bwd_bins) min_bwd = std::min(min_bwd, d);
 

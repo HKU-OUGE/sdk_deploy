@@ -37,8 +37,8 @@ private:
         recv_count_++;
         auto start_time = std::chrono::high_resolution_clock::now();
 
-        std::vector<float> fwd_bins(126, 5.0f);
-        std::vector<float> bwd_bins(126, 5.0f);
+        std::vector<float> fwd_bins(126, 2.5f);
+        std::vector<float> bwd_bins(126, 2.5f);
 
         // 零拷贝迭代器：直接读取二进制内存
         sensor_msgs::PointCloud2ConstIterator<float> iter_x(*msg, "x");
@@ -94,9 +94,9 @@ private:
             }
         }
 
-        // ================= 极近盲区处理 =================
-        for (auto& val : fwd_bins) { if (val < 0.3f) val = -1.0f; }
-        for (auto& val : bwd_bins) { if (val < 0.3f) val = -1.0f; }
+        // ================= 极近盲区处理 (与 sim multi_layer_scan 一致：blind = no-hit = max_distance) =================
+        for (auto& val : fwd_bins) { if (val < 0.3f) val = 2.5f; }
+        for (auto& val : bwd_bins) { if (val < 0.3f) val = 2.5f; }
 
         // ================= 发布数据 =================
         std_msgs::msg::Float32MultiArray array_msg;
@@ -130,7 +130,8 @@ private:
     rclcpp::TimerBase::SharedPtr diag_timer_;
 
     // 缓存参数
-    const float target_angles_[6] = {-25.0f, -15.0f, -5.0f, 5.0f, 15.0f, 25.0f};
+    // L5 (idx 5) 改为 50° 当贴脚悬崖探测器，与 sim down_angles_deg[5] 对齐
+    const float target_angles_[6] = {-25.0f, -15.0f, -5.0f, 5.0f, 15.0f, 50.0f};
     const float fwd_offset_[3] = {0.32028f, 0.0f, -0.013f};
     const float bwd_offset_[3] = {-0.32028f, 0.0f, -0.013f};
     const float angle_tol_ = 4.0f;

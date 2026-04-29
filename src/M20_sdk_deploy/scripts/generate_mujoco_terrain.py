@@ -287,10 +287,13 @@ if __name__ == "__main__":
     gen.add_hurdle(hurdle_height=0.4, bar_thickness=1.0, width = 5.0)
     gen.add_hurdle(hurdle_height=0.35, bar_thickness=1.0, width = 5.0)
 
+    gen.add_pit(pit_depth=0.2, gap_length=2.0, double_pit=False)
+    gen.add_pit(pit_depth=0.4, gap_length=2.0, double_pit=False)
+    gen.add_pit(pit_depth=0.6, gap_length=2.0, double_pit=False)
     # 7. Gap 地形 (4种不同宽度)
-    gen.add_gap(gap_length=0.2, gap_depth=0.3, double_gap=False)
-    gen.add_gap(gap_length=0.4, gap_depth=0.5, double_gap=False)
-    gen.add_gap(gap_length=0.6, gap_depth=0.7, double_gap=False)
-    gen.add_gap(gap_length=0.8, gap_depth=1.0, double_gap=False)
+    # gen.add_gap(gap_length=0.2, gap_depth=0.3, double_gap=False)
+    # gen.add_gap(gap_length=0.4, gap_depth=0.5, double_gap=False)
+    # gen.add_gap(gap_length=0.6, gap_depth=0.7, double_gap=False)
+    # gen.add_gap(gap_length=0.8, gap_depth=1.0, double_gap=False)
 
     gen.save()
