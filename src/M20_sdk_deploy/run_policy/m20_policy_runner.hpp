@@ -195,7 +195,7 @@ public:
         std::time_t t = std::time(nullptr);
         char time_str[100];
         std::strftime(time_str, sizeof(time_str), "%Y%m%d_%H%M%S", std::localtime(&t));
-        log_file_name_ = "shadow_perception_log_" + std::string(time_str) + ".csv";
+        log_file_name_ = policy_name_ + "_log_" + std::string(time_str) + ".csv";
 
         data_log_file_.open(log_file_name_);
         if (data_log_file_.is_open()) {
@@ -205,9 +205,9 @@ public:
             for(int i = 0; i < 126; ++i) data_log_file_ << ",fwd_" << i;
             for(int i = 0; i < 126; ++i) data_log_file_ << ",bwd_" << i;
             data_log_file_ << "\n";
-            std::cout << "✅ [Shadow Logger] Data will be saved to: " << log_file_name_ << std::endl;
+            std::cout << "✅ [" << policy_name_ << " Logger] Data will be saved to: " << log_file_name_ << std::endl;
         } else {
-            std::cerr << "❌ [Shadow Logger] Failed to open file: " << log_file_name_ << std::endl;
+            std::cerr << "❌ [" << policy_name_ << " Logger] Failed to open file: " << log_file_name_ << std::endl;
         }
 
         // ====================================================================

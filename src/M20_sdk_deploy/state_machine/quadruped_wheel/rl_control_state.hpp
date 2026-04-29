@@ -139,7 +139,7 @@ namespace qw {
                 namespace fs = std::filesystem;
                 fs::path base = fs::path(__FILE__).parent_path();
                 auto model_path = fs::canonical(base / ".." / ".." / "policy" / "policy_blind_hard.onnx");
-                m20_policy_ = std::make_shared<M20PolicyRunner>("m20_policy", model_path.string());
+                m20_policy_ = std::make_shared<M20PolicyRunner>(state_name_, model_path.string());
             }
 
             policy_ptr_ = m20_policy_;

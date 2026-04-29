@@ -78,7 +78,7 @@ namespace qw {
                 fs::path base = fs::path(__FILE__).parent_path();
 
                 auto model_path = fs::canonical(base / ".." / ".." / "policy" / "gap_unified_policy.onnx");
-                m20_policy_ = std::make_shared<M20SensorPolicyRunner>("m20_gap_policy", model_path.string());
+                m20_policy_ = std::make_shared<M20SensorPolicyRunner>(state_name_, model_path.string());
             }
 
             policy_ptr_ = m20_policy_;

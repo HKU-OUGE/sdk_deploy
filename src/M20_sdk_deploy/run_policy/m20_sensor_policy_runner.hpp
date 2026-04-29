@@ -171,12 +171,12 @@ public:
                 executor.add_node(ros_node_);
                 executor.spin();
             });
-            // === 新增：初始化数据记录器 CSV 文件 (带时间戳) ===
+            // === 数据记录器 CSV：用 policy_name_ 命名，每个 state 独立文件 ===
             std::time_t t = std::time(nullptr);
             char time_str[100];
             std::strftime(time_str, sizeof(time_str), "%Y%m%d_%H%M%S", std::localtime(&t));
-            log_file_name_ = "sensor_perception_log_" + std::string(time_str) + ".csv";
-            
+            log_file_name_ = policy_name_ + "_log_" + std::string(time_str) + ".csv";
+
             data_log_file_.open(log_file_name_);
             if (data_log_file_.is_open()) {
                 data_log_file_ << "step,time,robot_x,robot_y,robot_z,robot_yaw,valid_h_count,hole_ratio_pct,min_fwd,min_bwd";
@@ -184,9 +184,9 @@ public:
                 for(int i = 0; i < 126; ++i) data_log_file_ << ",fwd_" << i;
                 for(int i = 0; i < 126; ++i) data_log_file_ << ",bwd_" << i;
                 data_log_file_ << "\n";
-                std::cout << "✅ [Sensor Logger] Data will be saved to: " << log_file_name_ << std::endl;
+                std::cout << "✅ [" << policy_name_ << " Logger] Data will be saved to: " << log_file_name_ << std::endl;
             } else {
-                std::cerr << "❌ [Sensor Logger] Failed to open file: " << log_file_name_ << std::endl;
+                std::cerr << "❌ [" << policy_name_ << " Logger] Failed to open file: " << log_file_name_ << std::endl;
             }
         }
     }
