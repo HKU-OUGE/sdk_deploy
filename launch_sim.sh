@@ -1,15 +1,18 @@
 #!/bin/bash
 # Sim2Sim launch script - Terminator (preferred) or gnome-terminal fallback
+#
+# 自 ElevationAE 移除后，elevation_mapping_cupy 与对应 UDP map bridge 已不再需要。
+# 当前 4 个 pane:
+#   - MuJoCo:       仿真 + lidar 点云发布 (/LIDAR_SIM_RAW)
+#   - UDP SDK:      跨机器 lidar 接收（同机器 sim2sim 实际不需要，但保留以兼容真机部署）
+#   - LiDAR2Scan:   订阅 /LIDAR_SIM_RAW，输出 992-dim 半球 hemispherical scan
+#   - RL Deploy:    onnx policy + state machine
 SDK_DIR="$HOME/Software/sdk_deploy"
-RL_WS_DIR="$HOME/Software/rl_ws"
 DOMAIN_ID=1
 
 PRE_SDK="conda deactivate 2>/dev/null; export ROS_DOMAIN_ID=$DOMAIN_ID; cd $SDK_DIR && source install/setup.zsh"
-PRE_RLWS="conda deactivate 2>/dev/null; export ROS_DOMAIN_ID=$DOMAIN_ID; cd $RL_WS_DIR && source install/setup.zsh"
 
 CMD1="$PRE_SDK && python3 src/M20_sdk_deploy/interface/robot/simulation/mujoco_simulation_ros2.py; exec zsh"
-CMD2="$PRE_RLWS && ros2 launch elevation_mapping_cupy elevation_mapping.launch.py robot_config:=m20.yaml; exec zsh"
-CMD3="$PRE_RLWS && python3 src/elevation_mapping_cupy/scripts/udp_brideg_mapping_node.py; exec zsh"
 CMD4="$PRE_SDK && python3 src/M20_sdk_deploy/scripts/udp_bridge_sdk_node.py; exec zsh"
 CMD5="$PRE_SDK && python3 src/M20_sdk_deploy/scripts/lidar_to_scan.py; exec zsh"
 CMD6="$PRE_SDK && ros2 run m20_sdk_deploy rl_deploy; exec zsh"
@@ -22,24 +25,6 @@ conda deactivate 2>/dev/null
 export ROS_DOMAIN_ID=1
 cd ~/Software/sdk_deploy && source install/setup.zsh
 python3 src/M20_sdk_deploy/interface/robot/simulation/mujoco_simulation_ros2.py
-exec zsh
-SCRIPT
-
-    cat > /tmp/sim_cmd_elevmap.sh << 'SCRIPT'
-#!/bin/zsh
-conda deactivate 2>/dev/null
-export ROS_DOMAIN_ID=1
-cd ~/Software/rl_ws && source install/setup.zsh
-ros2 launch elevation_mapping_cupy elevation_mapping.launch.py robot_config:=m20.yaml
-exec zsh
-SCRIPT
-
-    cat > /tmp/sim_cmd_udp_map.sh << 'SCRIPT'
-#!/bin/zsh
-conda deactivate 2>/dev/null
-export ROS_DOMAIN_ID=1
-cd ~/Software/rl_ws && source install/setup.zsh
-python3 src/elevation_mapping_cupy/scripts/udp_brideg_mapping_node.py
 exec zsh
 SCRIPT
 
@@ -98,15 +83,10 @@ SCRIPT
       type = VPaned
       parent = child0
       order = 0
-      ratio = 0.66
-    [[[child2]]]
-      type = VPaned
-      parent = child1
-      order = 0
       ratio = 0.5
     [[[row1]]]
       type = HPaned
-      parent = child2
+      parent = child1
       order = 0
       ratio = 0.5
     [[[mujoco]]]
@@ -115,59 +95,40 @@ SCRIPT
       order = 0
       title = MuJoCo
       command = /tmp/sim_cmd_mujoco.sh
-    [[[elevmap]]]
+    [[[udp_sdk]]]
       type = Terminal
       parent = row1
       order = 1
-      title = ElevMap
-      command = /tmp/sim_cmd_elevmap.sh
-    [[[row2]]]
-      type = HPaned
-      parent = child2
-      order = 1
-      ratio = 0.5
-    [[[udp_map]]]
-      type = Terminal
-      parent = row2
-      order = 0
-      title = UDP Map (Server)
-      command = /tmp/sim_cmd_udp_map.sh
-    [[[udp_sdk]]]
-      type = Terminal
-      parent = row2
-      order = 1
-      title = UDP SDK (Client)
+      title = UDP SDK (lidar)
       command = /tmp/sim_cmd_udp_sdk.sh
-    [[[row3]]]
+    [[[row2]]]
       type = HPaned
       parent = child1
       order = 1
       ratio = 0.5
     [[[lidar2scan]]]
       type = Terminal
-      parent = row3
+      parent = row2
       order = 0
       title = LiDAR2Scan
       command = /tmp/sim_cmd_lidar2scan.sh
     [[[rl_deploy]]]
       type = Terminal
-      parent = row3
+      parent = row2
       order = 1
       title = RL Deploy
       command = /tmp/sim_cmd_rl_deploy.sh
 [plugins]
 TCONF
-    echo "Launching Terminator with 3x2 grid..."
+    echo "Launching Terminator with 2x2 grid (elevation pipeline removed)..."
     terminator --no-dbus -g "$CFG" -l sim -m 2>/dev/null &
 else
     echo "Terminator not found, using gnome-terminal..."
     gnome-terminal --title="MuJoCo"          -- zsh -ic "$CMD1" &
-    gnome-terminal --title="ElevMap"         -- zsh -ic "$CMD2" &
-    gnome-terminal --title="UDP Map"         -- zsh -ic "$CMD3" &
-    sleep 2
+    sleep 1
     gnome-terminal --title="UDP SDK"         -- zsh -ic "$CMD4" &
     gnome-terminal --title="LiDAR2Scan"      -- zsh -ic "$CMD5" &
     gnome-terminal --title="RL Deploy"       -- zsh -ic "$CMD6" &
 fi
 
-echo "All nodes launched."
+echo "All nodes launched (4 panes: MuJoCo / UDP SDK / LiDAR2Scan / RL Deploy)."

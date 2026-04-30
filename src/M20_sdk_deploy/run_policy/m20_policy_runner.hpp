@@ -19,23 +19,7 @@
 #include <array>
 #include <cstring>
 #include <algorithm>
-#include <fstream>   // 新增：用于文件写入
-#include <iomanip>
 #include <onnxruntime_cxx_api.h>
-
-// === 新增：用于后台收集感知数据的依赖 ===
-#include <rclcpp/rclcpp.hpp>
-#include <grid_map_msgs/msg/grid_map.hpp>
-#include <sensor_msgs/msg/point_cloud2.hpp>
-#include <tf2_ros/transform_listener.h>
-#include <tf2_ros/buffer.h>
-#include <tf2/LinearMath/Quaternion.h>
-#include <tf2/LinearMath/Matrix3x3.h>
-#include <grid_map_ros/grid_map_ros.hpp>
-#include <std_msgs/msg/float32_multi_array.hpp>
-#include <mutex>
-#include <thread>
-#include <deque>
 
 class M20PolicyRunner : public PolicyRunnerBase {
 private:
@@ -106,30 +90,6 @@ private:
     float time_step = 0.;
     int stop_count = 1000;
 
-    // ====================================================================
-    // === 新增：影子模式 (Shadow Mode) 感知预处理组件 ===
-    // ====================================================================
-    rclcpp::Node::SharedPtr ros_node_;
-    rclcpp::Subscription<grid_map_msgs::msg::GridMap>::SharedPtr grid_map_sub_;
-    // rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr lidar_sub_;
-    rclcpp::Subscription<std_msgs::msg::Float32MultiArray>::SharedPtr scan_array_sub_;
-    std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
-    std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
-    std::thread ros_spin_thread_;
-
-    std::mutex map_mutex_;
-    grid_map_msgs::msg::GridMap latest_map_;
-    bool map_received_ = false;
-
-    std::mutex scan_mutex_;
-    std::vector<float> fwd_scan_bins_;
-    std::vector<float> bwd_scan_bins_;
-    bool scan_received_ = false;
-
-    // 新增：数据记录器相关变量
-    std::ofstream data_log_file_;
-    std::string log_file_name_;
-
 public:
     M20PolicyRunner(const std::string &policy_name, const std::string &policy_path) :
             PolicyRunnerBase(policy_name), policy_path_(policy_path),
@@ -188,73 +148,9 @@ public:
         last_action_eigen.setZero(action_dim);
         tmp_action_eigen.setZero(action_dim);
         current_action_eigen.setZero(action_dim);
-
-        // ====================================================================
-        // === 新增：初始化数据记录器 CSV 文件 (带时间戳) ===
-        // ====================================================================
-        std::time_t t = std::time(nullptr);
-        char time_str[100];
-        std::strftime(time_str, sizeof(time_str), "%Y%m%d_%H%M%S", std::localtime(&t));
-        log_file_name_ = policy_name_ + "_log_" + std::string(time_str) + ".csv";
-
-        data_log_file_.open(log_file_name_);
-        if (data_log_file_.is_open()) {
-            // 写入表头 (新增 hole_ratio_pct)
-            data_log_file_ << "step,time,robot_x,robot_y,robot_z,robot_yaw,valid_h_count,hole_ratio_pct,min_fwd,min_bwd";
-            for(int i = 0; i < 187; ++i) data_log_file_ << ",h_" << i;
-            for(int i = 0; i < 126; ++i) data_log_file_ << ",fwd_" << i;
-            for(int i = 0; i < 126; ++i) data_log_file_ << ",bwd_" << i;
-            data_log_file_ << "\n";
-            std::cout << "✅ [" << policy_name_ << " Logger] Data will be saved to: " << log_file_name_ << std::endl;
-        } else {
-            std::cerr << "❌ [" << policy_name_ << " Logger] Failed to open file: " << log_file_name_ << std::endl;
-        }
-
-        // ====================================================================
-        // === 初始化影子感知节点与接收队列 ===
-        // ====================================================================
-        fwd_scan_bins_.resize(126, 2.5f);
-        bwd_scan_bins_.resize(126, 2.5f);
-
-        ros_node_ = rclcpp::Node::make_shared("m20_shadow_perception_node");
-        tf_buffer_ = std::make_shared<tf2_ros::Buffer>(ros_node_->get_clock());
-        tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
-
-        // 订阅高程图
-        grid_map_sub_ = ros_node_->create_subscription<grid_map_msgs::msg::GridMap>(
-        "/elevation_map_remote", rclcpp::SensorDataQoS(),
-            [this](const grid_map_msgs::msg::GridMap::SharedPtr msg) {
-                std::lock_guard<std::mutex> lock(map_mutex_);
-                latest_map_ = *msg;
-                map_received_ = true;
-            });
-
-        // 订阅雷达
-        scan_array_sub_ = ros_node_->create_subscription<std_msgs::msg::Float32MultiArray>(
-            "/scan/multi_layer_features_array", rclcpp::SensorDataQoS(),
-            [this](const std_msgs::msg::Float32MultiArray::SharedPtr msg) {
-                // 安全检查：必须是前向 126 + 后向 126 = 252 个特征
-                if (msg->data.size() != 252) return;
-                
-                std::lock_guard<std::mutex> lock(scan_mutex_);
-                // 直接内存拷贝前 126 个给前向，后 126 个给后向
-                std::copy(msg->data.begin(), msg->data.begin() + 126, fwd_scan_bins_.begin());
-                std::copy(msg->data.begin() + 126, msg->data.end(), bwd_scan_bins_.begin());
-                scan_received_ = true;
-            });
-
-        // 启动后台 ROS Spinner
-        ros_spin_thread_ = std::thread([this]() { rclcpp::spin(ros_node_); });
     }
 
-    ~M20PolicyRunner() override {
-        rclcpp::shutdown();
-        if (ros_spin_thread_.joinable()) ros_spin_thread_.join();
-
-        if (data_log_file_.is_open()) {
-            data_log_file_.close();
-        }
-    }
+    ~M20PolicyRunner() override = default;
 
     std::vector<int> generate_permutation(const std::vector<std::string>& from, const std::vector<std::string>& to, int default_index = 0) {
         std::unordered_map<std::string, int> idx_map;
@@ -300,9 +196,11 @@ public:
     }
 
     // ====================================================================
-    // === 影子数据收集函数 (计算、记录文件，但不喂给网络) ===
+    // === 影子数据收集 (旧版用于 elevation+scan 调试，已随 ElevationAE 移除一并删除) ===
+    // === Blind base policy 不需要任何感知输入                                 ===
     // ====================================================================
-    void CollectShadowPerceptionData(const RobotBasicState &ro) {
+#if 0
+    void CollectShadowPerceptionData_DEPRECATED(const RobotBasicState &ro) {
         // ==========================================================
         // === 智能位姿获取：优先 TF，失败则降级使用地图中心 ===
         // ==========================================================
@@ -508,6 +406,7 @@ public:
             data_log_file_ << "\n"; // 换行，利用 C++ ofstream 自身缓冲机制，避免阻塞
         }
     }
+#endif
 
     RobotAction getRobotAction(const RobotBasicState &ro, const UserCommand &uc) override {
 
@@ -543,11 +442,6 @@ public:
             robot_action.goal_joint_pos.segment(i*4, 3) = tmp_action_eigen.segment(i*4, 3);
             robot_action.goal_joint_vel(i*4+3) = tmp_action_eigen(i*4+3);
         }
-
-        // ====================================================================
-        // === 触发影子模式：记录所有数据到本地 csv，不影响盲步控制 ===
-        // ====================================================================
-        CollectShadowPerceptionData(ro);
 
         dbg_.cmd_vx = command(0);
         dbg_.cmd_vy = command(1);

@@ -1,18 +1,22 @@
 #!/usr/bin/env python3
+"""TCP Bridge (SDK 端 / Node B): 跨机器接收 lidar 点云 + base_link TF.
+
+A→B (本节点接收): pose (28 bytes: 3 trans + 4 quat) + N×12 bytes point cloud
+B→A: 已无内容下发 (elevation map 在 ElevationAE 移除后不再使用)
+"""
+import socket
+import struct
+import threading
+import time
+
+import numpy as np
 import rclpy
+import tf2_ros
+from geometry_msgs.msg import TransformStamped
 from rclpy.node import Node
+import sensor_msgs_py.point_cloud2 as pc2
 from sensor_msgs.msg import PointCloud2
 from std_msgs.msg import Header
-from grid_map_msgs.msg import GridMap
-from geometry_msgs.msg import TransformStamped
-import sensor_msgs_py.point_cloud2 as pc2
-from rclpy.serialization import serialize_message
-import tf2_ros
-import socket
-import numpy as np
-import threading
-import struct
-import time
 
 def recvall(sock, n):
     """辅助函数：确保从TCP流中完整读取 n 个字节"""
@@ -38,27 +42,11 @@ class TcpBridgeBNode(Node):
         self.lidar_pub = self.create_publisher(PointCloud2, '/LIDAR_POINT_CLOUD_MERGED', 10)
         self.tf_broadcaster = tf2_ros.TransformBroadcaster(self)
 
-        self.grid_map_sub = self.create_subscription(
-            GridMap, '/elevation_mapping_node/elevation_map_raw', self.gridmap_callback, 10)
-
+        # ElevationAE 已移除：不再订阅 /elevation_mapping_node/elevation_map_raw
         self.get_logger().info("Node B (Client) started. Trying to connect to Node A...")
-        
+
         self.recv_thread = threading.Thread(target=self.tcp_connect_and_receive_loop, daemon=True)
         self.recv_thread.start()
-
-    def gridmap_callback(self, msg: GridMap):
-        if not self.is_connected or self.sock is None:
-            return
-            
-        try:
-            serialized_msg = serialize_message(msg)
-            # 【TCP核心协议】：先发4字节长度，再发序列化数据
-            msg_length = struct.pack('<I', len(serialized_msg))
-            self.sock.sendall(msg_length + serialized_msg)
-            self.get_logger().info("⬆️ Sent large GridMap to Node A over TCP.", throttle_duration_sec=1.0)
-        except Exception as e:
-            self.get_logger().error(f"TCP Send Map Error: {e}")
-            self.is_connected = False # 触发重连
 
     def tcp_connect_and_receive_loop(self):
         while True:

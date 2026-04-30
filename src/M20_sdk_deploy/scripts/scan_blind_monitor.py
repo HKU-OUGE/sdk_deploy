@@ -1,34 +1,33 @@
 #!/usr/bin/env python3
 """
-Scan 盲区实时监控工具
-订阅 /scan/multi_layer_features_array，实时显示各扇区盲区触发情况。
+Scan 盲区实时监控工具 (半球 hemispherical 版本)
+订阅 /scan/multi_layer_features_array，实时显示各极角层盲区触发情况。
 
-Scan 结构：6 俯仰层 × 21 横向bin = 126 (前向) + 126 (后向) = 252
-用法：
-    ros2 run M20_sdk_deploy scan_blind_monitor.py
-    ros2 run M20_sdk_deploy scan_blind_monitor.py --ros-args -p threshold:=0.5
-    ros2 run M20_sdk_deploy scan_blind_monitor.py --ros-args -p threshold:=0.5 -p refresh_rate:=5.0
+Scan 结构: 16 polar × 31 azimuth = 496 (前向) + 496 (后向) = 992
+  - polar  ∈ [0°, 90°]:  从 boresight 出发的极角 (0 = 正前/正后, 90° = 半球边)
+  - azimuth ∈ [-180°, 180°]: 绕 boresight 一圈
 """
+
+import math
+import os
+import sys
+import time
 
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import Float32MultiArray
-import os
-import time
-import sys
+
+
+NUM_LAYERS = 16          # polar bins
+NUM_RAYS = 31            # azimuth bins
+NUM_PER_DIR = NUM_LAYERS * NUM_RAYS   # 496
+NUM_TOTAL = NUM_PER_DIR * 2            # 992
+MAX_RANGE = 2.5
 
 PITCH_LABELS = [
-    "Layer 0  -25° 陡俯",
-    "Layer 1  -15° 浅俯",
-    "Layer 2   -5° 近平↓",
-    "Layer 3   +5° 近平↑",
-    "Layer 4  +15° 浅仰",
-    "Layer 5  +25° 陡仰",
+    f"L{i:02d}  polar={int(round(i * 90.0 / (NUM_LAYERS - 1)))}°"
+    for i in range(NUM_LAYERS)
 ]
-
-NUM_LAYERS = 6
-NUM_RAYS = 21
-MAX_RANGE = 5.0
 
 
 class ScanBlindMonitor(Node):
@@ -61,10 +60,10 @@ class ScanBlindMonitor(Node):
         )
 
     def scan_cb(self, msg: Float32MultiArray):
-        if len(msg.data) != 252:
+        if len(msg.data) != NUM_TOTAL:
             return
-        self.fwd_data = list(msg.data[:126])
-        self.bwd_data = list(msg.data[126:])
+        self.fwd_data = list(msg.data[:NUM_PER_DIR])
+        self.bwd_data = list(msg.data[NUM_PER_DIR:])
         self.msg_count += 1
 
     def analyze_sector(self, bins, layer_idx):
@@ -192,14 +191,13 @@ class ScanBlindMonitor(Node):
                         else:
                             bin_strs.append(f"\033[92m{v:5.2f}\033[0m")
 
-                    line1 = "  Bins  0-10: " + " ".join(bin_strs[:11])
-                    line2 = "  Bins 11-20: " + " ".join(bin_strs[11:])
-                    # raw print without ljust (ANSI codes break padding)
-                    print("│" + line1)
-                    print("│" + line2)
+                    # 31 azimuth bins → 拆 3 行: 0-10, 11-20, 21-30
+                    print("│" + "  Bins  0-10: " + " ".join(bin_strs[:11]))
+                    print("│" + "  Bins 11-20: " + " ".join(bin_strs[11:21]))
+                    print("│" + "  Bins 21-30: " + " ".join(bin_strs[21:]))
                     print("│" + " " * W + "│")
 
-            print("│" + f"  Legend: \033[91mRED\033[0m=blind(<{self.threshold:.2f}m)  \033[92mGREEN\033[0m=valid  \033[90mGRAY\033[0m=max range(5.0m)".ljust(W) + "│")
+            print("│" + f"  Legend: \033[91mRED\033[0m=blind(<{self.threshold:.2f}m)  \033[92mGREEN\033[0m=valid  \033[90mGRAY\033[0m=max range({MAX_RANGE}m)".ljust(W) + "│")
         else:
             print(
                 "│"

@@ -3,18 +3,11 @@
 #include "policy_runner_base.hpp"
 #include <onnxruntime_cxx_api.h>
 #include <rclcpp/rclcpp.hpp>
-#include <grid_map_msgs/msg/grid_map.hpp>
-#include <sensor_msgs/msg/point_cloud2.hpp>
-#include <tf2_ros/transform_listener.h>
-#include <tf2_ros/buffer.h>
-#include <tf2/LinearMath/Quaternion.h>
-#include <tf2/LinearMath/Matrix3x3.h>
 #include <deque>
 #include <mutex>
 #include <thread>
 #include <cmath>
 #include <algorithm>
-#include <grid_map_ros/grid_map_ros.hpp>
 #include <std_msgs/msg/float32_multi_array.hpp>
 #include <fstream>
 #include <iomanip>
@@ -27,10 +20,15 @@ private:
     const int motor_num = 16, action_dim = 16;
     float omega_scale_ = 0.25, dof_vel_scale_ = 0.05;
 
+    // 半球 LIDAR (与 sim HemisphericalLidarPatternCfg 对齐):
+    //   前 16 polar × 31 azimuth = 496, 后 16 × 31 = 496, 总 992
+    // ElevationAE 已移除 (sim2real gap 太大)，proprio_env = proprio (57) + scan (992) = 1049
+    static constexpr int NUM_POLAR = 16;
+    static constexpr int NUM_AZ = 31;
+    static constexpr int SCAN_PER_DIR = NUM_POLAR * NUM_AZ;   // 496
     const int proprio_dim_ = 57;
-    const int elevation_dim_ = 187;
-    const int scan_dim_ = 252; 
-    const int proprio_env_dim_ = 496;  
+    const int scan_dim_ = SCAN_PER_DIR * 2;                   // 992
+    const int proprio_env_dim_ = proprio_dim_ + scan_dim_;    // 1049
     
     const int history_len_ = 15;
     const int estimator_dim_ = 855;    
@@ -77,16 +75,8 @@ private:
     const char* output_names_[2] = {"action", "next_h0"};
 
     rclcpp::Node::SharedPtr ros_node_;
-    rclcpp::Subscription<grid_map_msgs::msg::GridMap>::SharedPtr grid_map_sub_;
-    // rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr lidar_sub_;
     rclcpp::Subscription<std_msgs::msg::Float32MultiArray>::SharedPtr scan_array_sub_;
-    std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
-    std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
     std::thread ros_spin_thread_;
-    
-    std::mutex map_mutex_;
-    grid_map_msgs::msg::GridMap latest_map_;
-    bool map_received_ = false;
 
     std::mutex scan_mutex_;
     std::vector<float> fwd_scan_bins_;
@@ -116,8 +106,8 @@ public:
         estimator_history_data_.resize(estimator_dim_, 0.0f);
         hidden_state_data_.resize(hidden_dim_, 0.0f);
         
-        fwd_scan_bins_.resize(126, 2.5f);
-        bwd_scan_bins_.resize(126, 2.5f);
+        fwd_scan_bins_.resize(SCAN_PER_DIR, 2.5f);
+        bwd_scan_bins_.resize(SCAN_PER_DIR, 2.5f);
 
         for (int i = 0; i < history_len_; ++i) {
             history_buffer_.push_back(std::vector<float>(proprio_dim_, 0.0f));
@@ -141,32 +131,21 @@ public:
         last_action_eigen.setZero(16); tmp_action_eigen.setZero(16); current_action_eigen.setZero(16);
 
         if (!is_offline_test_) {
-            ros_node_ = rclcpp::Node::make_shared("m20_elevation_subscriber");
-            tf_buffer_ = std::make_shared<tf2_ros::Buffer>(ros_node_->get_clock());
-            tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
-
-            grid_map_sub_ = ros_node_->create_subscription<grid_map_msgs::msg::GridMap>(
-            "/elevation_map_remote", rclcpp::SensorDataQoS(),
-                [this](const grid_map_msgs::msg::GridMap::SharedPtr msg) {
-                    std::lock_guard<std::mutex> lock(map_mutex_);
-                    latest_map_ = *msg;
-                    map_received_ = true;
-                });
+            ros_node_ = rclcpp::Node::make_shared("m20_scan_subscriber");
 
             scan_array_sub_ = ros_node_->create_subscription<std_msgs::msg::Float32MultiArray>(
                 "/scan/multi_layer_features_array", rclcpp::SensorDataQoS(),
                 [this](const std_msgs::msg::Float32MultiArray::SharedPtr msg) {
-                    // 安全检查：必须是前向 126 + 后向 126 = 252 个特征
-                    if (msg->data.size() != 252) return;
-                    
+                    // 半球 hemispherical: 前 496 + 后 496 = 992
+                    if (static_cast<int>(msg->data.size()) != scan_dim_) return;
+
                     std::lock_guard<std::mutex> lock(scan_mutex_);
-                    // 直接内存拷贝前 126 个给前向，后 126 个给后向
-                    std::copy(msg->data.begin(), msg->data.begin() + 126, fwd_scan_bins_.begin());
-                    std::copy(msg->data.begin() + 126, msg->data.end(), bwd_scan_bins_.begin());
+                    std::copy(msg->data.begin(), msg->data.begin() + SCAN_PER_DIR, fwd_scan_bins_.begin());
+                    std::copy(msg->data.begin() + SCAN_PER_DIR, msg->data.end(), bwd_scan_bins_.begin());
                     scan_received_ = true;
                 });
 
-            ros_spin_thread_ = std::thread([this]() { 
+            ros_spin_thread_ = std::thread([this]() {
                 rclcpp::executors::MultiThreadedExecutor executor;
                 executor.add_node(ros_node_);
                 executor.spin();
@@ -179,10 +158,9 @@ public:
 
             data_log_file_.open(log_file_name_);
             if (data_log_file_.is_open()) {
-                data_log_file_ << "step,time,robot_x,robot_y,robot_z,robot_yaw,valid_h_count,hole_ratio_pct,min_fwd,min_bwd";
-                for(int i = 0; i < 187; ++i) data_log_file_ << ",h_" << i;
-                for(int i = 0; i < 126; ++i) data_log_file_ << ",fwd_" << i;
-                for(int i = 0; i < 126; ++i) data_log_file_ << ",bwd_" << i;
+                data_log_file_ << "step,time,min_fwd,min_bwd";
+                for(int i = 0; i < SCAN_PER_DIR; ++i) data_log_file_ << ",fwd_" << i;
+                for(int i = 0; i < SCAN_PER_DIR; ++i) data_log_file_ << ",bwd_" << i;
                 data_log_file_ << "\n";
                 std::cout << "✅ [" << policy_name_ << " Logger] Data will be saved to: " << log_file_name_ << std::endl;
             } else {
@@ -224,9 +202,8 @@ public:
 
     VecXf processAndInfer(
         const std::vector<float>& curr_proprio,
-        const std::vector<float>& heights_187,
-        const std::vector<float>& fwd_scan_126,
-        const std::vector<float>& bwd_scan_126) 
+        const std::vector<float>& fwd_scan,
+        const std::vector<float>& bwd_scan)
     {
         std::copy(curr_proprio.begin(), curr_proprio.end(), proprio_env_data_.begin());
 
@@ -265,8 +242,6 @@ public:
         }
 
         int env_idx = proprio_dim_;
-        std::copy(heights_187.begin(), heights_187.end(), proprio_env_data_.begin() + env_idx);
-        env_idx += 187;
 
         auto map_scan_fn = [](float d) {
             // 与 sim multi_layer_scan 一致：盲区 (d < 0.3) 视为 no-hit → 归一化 1.0
@@ -275,8 +250,8 @@ public:
             return std::clamp(d / 2.5f, 0.0f, 1.0f);
         };
 
-        for (int i = 0; i < 126; ++i) proprio_env_data_[env_idx++] = map_scan_fn(fwd_scan_126[i]);
-        for (int i = 0; i < 126; ++i) proprio_env_data_[env_idx++] = map_scan_fn(bwd_scan_126[i]);
+        for (int i = 0; i < SCAN_PER_DIR; ++i) proprio_env_data_[env_idx++] = map_scan_fn(fwd_scan[i]);
+        for (int i = 0; i < SCAN_PER_DIR; ++i) proprio_env_data_[env_idx++] = map_scan_fn(bwd_scan[i]);
 
         std::vector<Ort::Value> input_tensors;
         input_tensors.emplace_back(Ort::Value::CreateTensor<float>(memory_info, proprio_env_data_.data(), proprio_env_data_.size(), shape_proprio_env_.data(), 2));
@@ -295,7 +270,7 @@ public:
     VecXf testOfflineStep(
         const std::vector<float>& omega, const std::vector<float>& proj_g, const std::vector<float>& cmd,
         const std::vector<float>& jp, const std::vector<float>& jv, const std::vector<float>& last_act,
-        const std::vector<float>& raw_heights, const std::vector<float>& raw_fwd, const std::vector<float>& raw_bwd) 
+        const std::vector<float>& raw_fwd, const std::vector<float>& raw_bwd)
     {
         std::vector<float> curr_proprio(proprio_dim_, 0.0f);
         
@@ -318,7 +293,7 @@ public:
             curr_proprio[idx++] = std::clamp(last_act[i], -100.0f, 100.0f); 
         }
 
-        return processAndInfer(curr_proprio, raw_heights, raw_fwd, raw_bwd);
+        return processAndInfer(curr_proprio, raw_fwd, raw_bwd);
     }
 
     RobotAction getRobotAction(const RobotBasicState &ro, const UserCommand &uc) override {
@@ -346,175 +321,9 @@ public:
             curr_proprio[idx++] = std::clamp(last_action_eigen[i], -100.0f, 100.0f);
         }
 
-        std::vector<float> curr_heights(187, 0.0f);
-        // ==========================================================
-        // === 智能位姿获取：优先 TF，失败则降级使用地图中心 ===
-        // ==========================================================
-        float robot_x = 0, robot_y = 0, robot_z = 0.45f;
-        float robot_yaw = ro.base_rpy(2); // 默认使用高频可靠的 IMU 航向角
-        bool tf_valid = false;
-
-        try {
-            geometry_msgs::msg::TransformStamped t = tf_buffer_->lookupTransform("odom", "base_link", tf2::TimePointZero);
-            robot_x = t.transform.translation.x; 
-            robot_y = t.transform.translation.y; 
-            robot_z = t.transform.translation.z; // 拿到了真实的动态高度！
-            
-            tf2::Quaternion q(t.transform.rotation.x, t.transform.rotation.y, t.transform.rotation.z, t.transform.rotation.w);
-            tf2::Matrix3x3 m(q); double roll, pitch, yaw; m.getRPY(roll, pitch, yaw);
-            robot_yaw = yaw; // 如果 TF 正常，以 TF 为准
-            tf_valid = true;
-        } catch (const tf2::TransformException & ex) { 
-            if (run_cnt_ % 50 == 0) {
-                std::cerr << "⚠️ [TF Warning] 无 TF，将启用地图中心降级方案: " << ex.what() << std::endl;
-            }
-        }
-
-        grid_map_msgs::msg::GridMap local_map_msg;
-        bool has_map = false;
-        {
-            std::lock_guard<std::mutex> lock(map_mutex_);
-            if (map_received_) {
-                local_map_msg = latest_map_;
-                has_map = true;
-            }
-        }
-
-        grid_map::GridMap local_grid_map;
-        bool map_converted = false;
-        if (has_map) {
-            map_converted = grid_map::GridMapRosConverter::fromMessage(local_map_msg, local_grid_map);
-            
-            // 【核心】：如果 TF 失败（真机环境），启用“四足正向运动学 + 地图联合采样”
-            if (!tf_valid) {
-                grid_map::Position map_center = local_grid_map.getPosition();
-                robot_x = map_center.x();
-                robot_y = map_center.y();
-
-                // ==========================================================
-                // === 高精度运动学高度补偿 (4-Point Leg Odometry) ===
-                // ==========================================================
-                float estimated_z_sum = 0.0f;
-                int valid_feet_count = 0;
-
-                // 足端相对于基座中心的近似初始水平偏移
-                float base_x_offsets[4] = {0.31f, 0.31f, -0.31f, -0.31f};
-                float base_y_offsets[4] = {0.17f, -0.17f, 0.17f, -0.17f};
-                int hipy_indices[4] = {1, 5, 9, 13};
-                int knee_indices[4] = {2, 6, 10, 14};
-
-                for (int i = 0; i < 4; ++i) {
-                    float q_hipy = ro.joint_pos(hipy_indices[i]);
-                    float q_knee = ro.joint_pos(knee_indices[i]);
-                    
-                    // 1. 修复1：使用 0.072f 补偿轮毂半径和基座中心 Z 偏移
-                    float z_drop = 0.25f * std::cos(q_hipy) + 0.25f * std::cos(q_hipy + q_knee) + 0.086f;
-                    
-                    // 2. 修复2：关节角度已自带正确方向，绝对不能对后腿的 X 偏移取反！
-                    float x_shift = 0.25f * std::sin(q_hipy) + 0.25f * std::sin(q_hipy + q_knee);
-                    
-                    Eigen::Vector3f foot_local(base_x_offsets[i] + x_shift, base_y_offsets[i], -z_drop);
-                    Eigen::Vector3f foot_world_offset = ro.base_rot_mat * foot_local;
-                    
-                    // 3. 查询该脚踩着的真实地面高度
-                    grid_map::Position foot_pos(robot_x + foot_world_offset.x(), robot_y + foot_world_offset.y());
-                    if (local_grid_map.isInside(foot_pos)) {
-                        float foot_ground_h = local_grid_map.atPosition("elevation", foot_pos);
-                        if (!std::isnan(foot_ground_h)) {
-                            // 4. Z_base = 脚底地面高度 - 脚相对于Base在世界Z轴的偏移
-                            estimated_z_sum += (foot_ground_h - foot_world_offset.z());
-                            valid_feet_count++;
-                        }
-                    }
-                }
-
-                if (valid_feet_count > 0) {
-                    robot_z = estimated_z_sum / valid_feet_count;
-                } else {
-                    if (local_grid_map.exists("elevation") && local_grid_map.isInside(map_center)) {
-                        float center_ground_h = local_grid_map.atPosition("elevation", map_center);
-                        if (!std::isnan(center_ground_h)) robot_z = center_ground_h + 0.45f;
-                    }
-                }
-                // ==========================================================
-            }
-
-            if (run_cnt_ % 50 == 0) {
-                dbg_.robot_x = robot_x;
-                dbg_.robot_y = robot_y;
-                dbg_.robot_z = robot_z;
-                dbg_.robot_yaw = robot_yaw;
-                dbg_.tf_valid = tf_valid;
-                dbg_.has_map = true;
-            }
-        }
-
-        // ==========================================================
-        // === 运动学 Z 轴补偿对比测试 (仅在有 TF 时打印验证) ===
-        // ==========================================================
-        if (map_converted && run_cnt_ % 10 == 0 && tf_valid) {
-            float estimated_z_sum = 0.0f;
-            int valid_feet_count = 0;
-
-            float base_x_offsets[4] = {0.31f, 0.31f, -0.31f, -0.31f};
-            float base_y_offsets[4] = {0.17f, -0.17f, 0.17f, -0.17f};
-            int hipy_indices[4] = {1, 5, 9, 13};
-            int knee_indices[4] = {2, 6, 10, 14};
-
-            for (int i = 0; i < 4; ++i) {
-                float q_hipy = ro.joint_pos(hipy_indices[i]);
-                float q_knee = ro.joint_pos(knee_indices[i]);
-                float z_drop = 0.25f * std::cos(q_hipy) + 0.25f * std::cos(q_hipy + q_knee) + 0.086f;
-                float x_shift = 0.25f * std::sin(q_hipy) + 0.25f * std::sin(q_hipy + q_knee);
-                Eigen::Vector3f foot_local(base_x_offsets[i] + x_shift, base_y_offsets[i], -z_drop);
-                Eigen::Vector3f foot_world_offset = ro.base_rot_mat * foot_local;
-                
-                // 注意这里使用的也是 map_center 来模拟没 TF 时的场景
-                grid_map::Position map_center = local_grid_map.getPosition();
-                grid_map::Position foot_pos(map_center.x() + foot_world_offset.x(), map_center.y() + foot_world_offset.y());
-                
-                if (local_grid_map.isInside(foot_pos)) {
-                    float foot_ground_h = local_grid_map.atPosition("elevation", foot_pos);
-                    if (!std::isnan(foot_ground_h)) {
-                        estimated_z_sum += (foot_ground_h - foot_world_offset.z());
-                        valid_feet_count++;
-                    }
-                }
-            }
-
-            if (valid_feet_count > 0) {
-                float est_z = estimated_z_sum / valid_feet_count;
-                float z_error = robot_z - est_z;
-                dbg_.fk_z = est_z;
-                dbg_.z_error = z_error;
-                dbg_.has_fk = true;
-            }
-        }
-        // ==========================================================
-
-        int env_idx = 0;
-        int valid_h_count = 0; // === 新增：统计有效高度点 ===
-        // 这里才是 187 个点的采样循环，里面不要放打印！
-        for (float dy = -0.5f; dy <= 0.5f + 1e-5; dy += 0.1f) {
-            for (float dx = -0.8f; dx <= 0.8f + 1e-5; dx += 0.1f) {
-                if (map_converted && local_grid_map.exists("elevation")) {
-                    float query_x = robot_x + (dx * std::cos(robot_yaw) - dy * std::sin(robot_yaw));
-                    float query_y = robot_y + (dx * std::sin(robot_yaw) + dy * std::cos(robot_yaw));
-                    grid_map::Position pos(query_x, query_y);
-                    if (local_grid_map.isInside(pos)) {
-                        float h = local_grid_map.atPosition("elevation", pos);
-                        if (!std::isnan(h)) {
-                            curr_heights[env_idx] = std::clamp(robot_z - h - 0.5f, -1.0f, 1.0f);
-                            valid_h_count++; // 累加有效点
-                        }
-                    }
-                }
-                env_idx++;
-            }
-        }
-
-        std::vector<float> curr_fwd_bins(126, 2.5f);
-        std::vector<float> curr_bwd_bins(126, 2.5f);
+        // === 半球 scan 拷贝 (前/后各 SCAN_PER_DIR 维) ===
+        std::vector<float> curr_fwd_bins(SCAN_PER_DIR, 2.5f);
+        std::vector<float> curr_bwd_bins(SCAN_PER_DIR, 2.5f);
         {
             std::lock_guard<std::mutex> lock(scan_mutex_);
             if (scan_received_) {
@@ -523,29 +332,20 @@ public:
             }
         }
 
-        // === 新增：将现成的感知数据写入 CSV（不影响推断速度） ===
+        // === CSV 日志：仅记录 scan (elevation 已移除) ===
         if (data_log_file_.is_open() && !is_offline_test_) {
             float min_fwd = 2.5f, min_bwd = 2.5f;
-            for(float d : curr_fwd_bins) min_fwd = std::min(min_fwd, d);
-            for(float d : curr_bwd_bins) min_bwd = std::min(min_bwd, d);
-
-            // 计算空洞数据百分比 (总采样点数为 187)
-            float hole_ratio_pct = (187.0f - valid_h_count) / 187.0f * 100.0f;
+            for (float d : curr_fwd_bins) min_fwd = std::min(min_fwd, d);
+            for (float d : curr_bwd_bins) min_bwd = std::min(min_bwd, d);
 
             if (run_cnt_ % 50 == 0) {
-                dbg_.hole_ratio_pct = hole_ratio_pct;
-                dbg_.valid_h_count = valid_h_count;
                 dbg_.min_fwd = min_fwd;
                 dbg_.min_bwd = min_bwd;
             }
             data_log_file_ << run_cnt_ << "," << getCurrentTime() << ","
-                           << robot_x << "," << robot_y << "," << robot_z << "," << robot_yaw << ","
-                           << valid_h_count << "," << hole_ratio_pct << "," << min_fwd << "," << min_bwd;
-
-            for (int i = 0; i < 187; ++i) data_log_file_ << "," << curr_heights[i];
-            for (int i = 0; i < 126; ++i) data_log_file_ << "," << curr_fwd_bins[i];
-            for (int i = 0; i < 126; ++i) data_log_file_ << "," << curr_bwd_bins[i];
-
+                           << min_fwd << "," << min_bwd;
+            for (int i = 0; i < SCAN_PER_DIR; ++i) data_log_file_ << "," << curr_fwd_bins[i];
+            for (int i = 0; i < SCAN_PER_DIR; ++i) data_log_file_ << "," << curr_bwd_bins[i];
             data_log_file_ << "\n";
         }
 
@@ -558,7 +358,7 @@ public:
         }
 
         // 喂给网络推断
-        processAndInfer(curr_proprio, curr_heights, curr_fwd_bins, curr_bwd_bins);
+        processAndInfer(curr_proprio, curr_fwd_bins, curr_bwd_bins);
 
         for (int i = 0; i < action_dim; ++i) {
             tmp_action_eigen(i) = current_action_eigen(robot2policy_idx[i]) * action_scale_robot[i];
