@@ -375,12 +375,13 @@ class MuJoCoSimulationNode(Node):
         msg.is_dense = True
         # =========== 监听 lidar_to_scan 输出，反推策略真正看到的 hit 点 ===========
         # 半球 layout: 前 16 polar × 31 azimuth (496) + 后 16 × 31 (496) = 992
+        # polar ∈ [0, 80°] (与 sim/deploy 收紧的 FOV 一致；真 Airy 在 polar > 80° 不可靠)
         # ray = (cos(polar), sin(polar)*sin(az), sin(polar)*cos(az)) in sensor-local frame
         # 后 sensor 经 180°Z 旋转: 世界系 ray = (-cos(p), -sin(p)*sin(a), sin(p)*cos(a))
         if hasattr(self, 'received_scan_array') and self.received_scan_array is not None and len(self.received_scan_array) == 992:
             scan_data = self.received_scan_array
             NUM_POLAR, NUM_AZ = 16, 31
-            polar_grid   = np.linspace(0.0, np.pi / 2, NUM_POLAR)
+            polar_grid   = np.linspace(0.0, math.radians(80.0), NUM_POLAR)
             azimuth_grid = np.linspace(-np.pi, np.pi,  NUM_AZ)
             cos_p = np.cos(polar_grid)[:, None]   # (16, 1)
             sin_p = np.sin(polar_grid)[:, None]

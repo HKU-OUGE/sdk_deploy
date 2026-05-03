@@ -6,13 +6,16 @@
 //   [496 .. 991]  后向半球，同样 16 × 31 layout
 //
 // 几何 (与 sim/rl_training/sensors/patterns.py 完全一致):
-//   - polar  ∈ [0, π/2]:    从 boresight 出发的极角，0 = 正前/正后, π/2 = 半球边
+//   - polar  ∈ [0, POLAR_MAX_RAD = 80°]:  从 boresight 出发的极角
+//        - 真 Airy Lissajous 扫描密度在 polar > 84° 急剧下降，导致 sim2real
+//          gap (real polar=90° no-hit 86% vs sim 59%)。把 sim 与 deploy
+//          都收紧到 80°，确保两端密度匹配。polar > 80° 的真机点直接丢弃。
 //   - azimuth ∈ [-π, π]:    绕 boresight 一圈，从 +Z 起算，正向 +Y
 //   - 前 boresight = robot +X，后 boresight = robot -X (对应 sim 后 sensor 的 180°Z 旋转)
 //
 // Bin 规则 (nearest neighbor, 匹配 sim 的 linspace 采样点):
-//   polar_idx   = round(polar   * (NUM_POLAR-1)   / (π/2))   ∈ [0, 15]
-//   azimuth_idx = round((azimuth + π) * (NUM_AZ-1) / (2π))    ∈ [0, 30]
+//   polar_idx   = round(polar   * (NUM_POLAR-1)   / POLAR_MAX_RAD)  ∈ [0, 15]
+//   azimuth_idx = round((azimuth + π) * (NUM_AZ-1) / (2π))           ∈ [0, 30]
 //   flat_idx    = polar_idx * NUM_AZ + azimuth_idx
 //
 // 每 bin 取最小深度；< 0.3m 视为盲区 → 填 2.5m (no-hit max_distance, 与 sim 一致)。
@@ -54,10 +57,12 @@ private:
     static constexpr int NUM_PER_DIR = NUM_POLAR * NUM_AZ;   // 496
     static constexpr int NUM_TOTAL   = NUM_PER_DIR * 2;       // 992
 
-    static constexpr float MAX_DIST  = 2.5f;
-    static constexpr float MIN_DIST  = 0.3f;
-    static constexpr float HALF_PI   = static_cast<float>(M_PI_2);
-    static constexpr float TWO_PI    = static_cast<float>(2.0 * M_PI);
+    static constexpr float MAX_DIST       = 2.5f;
+    static constexpr float MIN_DIST       = 0.3f;
+    // 真 Airy 在 polar > 80° 数据极不可靠，sim 与 deploy 同步限制到 80°
+    static constexpr float POLAR_MAX_DEG  = 80.0f;
+    static constexpr float POLAR_MAX_RAD  = POLAR_MAX_DEG * static_cast<float>(M_PI) / 180.0f;
+    static constexpr float TWO_PI         = static_cast<float>(2.0 * M_PI);
 
     void pc_callback(const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
         recv_count_++;
@@ -86,10 +91,10 @@ private:
                     if (r >= MIN_DIST && r <= MAX_DIST) {
                         const float perp  = std::sqrt(fy*fy + fz*fz);
                         const float polar = std::atan2(perp, fx);          // [0, π/2]
-                        if (polar <= HALF_PI) {
+                        if (polar <= POLAR_MAX_RAD) {
                             const float az = std::atan2(fy, fz);            // [-π, π]
                             const int p_idx = clampi(
-                                static_cast<int>(std::lround(polar * (NUM_POLAR - 1) / HALF_PI)),
+                                static_cast<int>(std::lround(polar * (NUM_POLAR - 1) / POLAR_MAX_RAD)),
                                 0, NUM_POLAR - 1);
                             const int a_idx = clampi(
                                 static_cast<int>(std::lround((az + static_cast<float>(M_PI)) * (NUM_AZ - 1) / TWO_PI)),
@@ -111,10 +116,10 @@ private:
                     if (r >= MIN_DIST && r <= MAX_DIST) {
                         const float perp  = std::sqrt(by*by + bz*bz);
                         const float polar = std::atan2(perp, -bx);          // 从 -X 算
-                        if (polar <= HALF_PI) {
+                        if (polar <= POLAR_MAX_RAD) {
                             const float az = std::atan2(-by, bz);            // Y 取反 (180°Z mirror)
                             const int p_idx = clampi(
-                                static_cast<int>(std::lround(polar * (NUM_POLAR - 1) / HALF_PI)),
+                                static_cast<int>(std::lround(polar * (NUM_POLAR - 1) / POLAR_MAX_RAD)),
                                 0, NUM_POLAR - 1);
                             const int a_idx = clampi(
                                 static_cast<int>(std::lround((az + static_cast<float>(M_PI)) * (NUM_AZ - 1) / TWO_PI)),

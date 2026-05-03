@@ -71,6 +71,9 @@ private:
     std::unique_ptr<Ort::Session> session_;
     Ort::MemoryInfo memory_info{nullptr};
 
+    // scan history 已禁用 — 当前训练 (platform/scan/split MoE teacher) 都是
+    // scan_history_offsets=[]; ONNX 只有 3 输入 / 2 输出, 不需要 ring buffer.
+
     const char* input_names_[3] = {"proprio_and_env", "estimator_history", "h0"};
     const char* output_names_[2] = {"action", "next_h0"};
 
@@ -105,7 +108,7 @@ public:
         proprio_env_data_.resize(proprio_env_dim_, 0.0f);
         estimator_history_data_.resize(estimator_dim_, 0.0f);
         hidden_state_data_.resize(hidden_dim_, 0.0f);
-        
+
         fwd_scan_bins_.resize(SCAN_PER_DIR, 2.5f);
         bwd_scan_bins_.resize(SCAN_PER_DIR, 2.5f);
 

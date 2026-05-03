@@ -22,7 +22,9 @@ NUM_PER_DIR = NUM_POLAR * NUM_AZ          # 496
 NUM_TOTAL = NUM_PER_DIR * 2                # 992
 MAX_DIST = 2.5
 MIN_DIST = 0.3
-HALF_PI = math.pi / 2
+# 真 Airy 在 polar > 80° 数据极不可靠 (Lissajous 扫描密度急剧下降)，
+# sim/deploy 都限制到 80°；polar > 80° 的真机点丢弃
+POLAR_MAX_RAD = math.radians(80.0)
 TWO_PI = 2 * math.pi
 
 
@@ -74,9 +76,14 @@ class LidarToScanArrayNode(Node):
 
         perp = np.sqrt(y_b * y_b + z_b * z_b)
         polar = np.arctan2(perp, x_b)              # [0, π/2]
+        # 丢弃 polar > POLAR_MAX_RAD 的点 (FOV 边缘真机不可靠区)
+        in_fov = polar <= POLAR_MAX_RAD
+        if not np.any(in_fov):
+            return bins
+        polar = polar[in_fov]; r = r[in_fov]; y_b = y_b[in_fov]; z_b = z_b[in_fov]
         az = np.arctan2(y_b, z_b)                  # [-π, π]
 
-        p_idx = np.clip(np.rint(polar * (NUM_POLAR - 1) / HALF_PI).astype(np.int32),
+        p_idx = np.clip(np.rint(polar * (NUM_POLAR - 1) / POLAR_MAX_RAD).astype(np.int32),
                         0, NUM_POLAR - 1)
         a_idx = np.clip(np.rint((az + math.pi) * (NUM_AZ - 1) / TWO_PI).astype(np.int32),
                         0, NUM_AZ - 1)

@@ -24,8 +24,9 @@ NUM_PER_DIR = NUM_LAYERS * NUM_RAYS   # 496
 NUM_TOTAL = NUM_PER_DIR * 2            # 992
 MAX_RANGE = 2.5
 
+POLAR_MAX_DEG = 80.0   # 与 sim/deploy 一致 (真 Airy 在 polar > 80° 不可靠)
 PITCH_LABELS = [
-    f"L{i:02d}  polar={int(round(i * 90.0 / (NUM_LAYERS - 1)))}°"
+    f"L{i:02d}  polar={i * POLAR_MAX_DEG / (NUM_LAYERS - 1):4.1f}°"
     for i in range(NUM_LAYERS)
 ]
 
