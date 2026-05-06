@@ -305,7 +305,7 @@ if __name__ == "__main__":
     gen.add_pit(pit_depth=0.4, gap_length=4.0, double_pit=False)
     gen.add_pit(pit_depth=0.5, gap_length=4.0, double_pit=False)
     gen.add_pit(pit_depth=0.6, gap_length=4.0, double_pit=False)
-    gen.add_pit(pit_depth=0.7, gap_length=4.0, double_pit=False)
+    # gen.add_pit(pit_depth=0.7, gap_length=4.0, double_pit=False)
     gen.add_hurdle(hurdle_height=0.5, bar_thickness=1.0, width = 5.0)
     gen.add_hurdle(hurdle_height=0.4, bar_thickness=1.0, width = 5.0)
     gen.add_hurdle(hurdle_height=0.35, bar_thickness=1.0, width = 5.0)

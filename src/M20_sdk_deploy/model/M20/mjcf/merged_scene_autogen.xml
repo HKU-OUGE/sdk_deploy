@@ -184,25 +184,23 @@
     <geom type="box" pos="18.000 0.0 0.260" size="1.000 1.500 0.250" material="stone_mat" />
     <geom type="box" pos="23.500 0.0 0.310" size="0.500 1.500 0.300" material="stone_mat" />
     <geom type="box" pos="25.000 0.0 0.260" size="1.000 1.500 0.250" material="stone_mat" />
-    <geom type="box" pos="30.500 0.0 0.360" size="0.500 1.500 0.350" material="stone_mat" />
-    <geom type="box" pos="32.000 0.0 0.260" size="1.000 1.500 0.250" material="stone_mat" />
-    <geom type="box" pos="34.000 0.0 0.260" size="1.000 2.500 0.250" material="stone_mat" />
-    <geom type="box" pos="34.000 2.000 0.760" size="0.500 0.500 0.250" material="rail_mat" />
-    <geom type="box" pos="34.000 -2.000 0.760" size="0.500 0.500 0.250" material="rail_mat" />
-    <geom type="box" pos="34.000 0.0 1.510" size="0.500 2.500 0.500" material="ring_mat" />
-    <geom type="box" pos="36.000 0.0 0.260" size="1.000 1.500 0.250" material="stone_mat" />
-    <geom type="box" pos="38.000 0.0 0.260" size="1.000 2.500 0.250" material="stone_mat" />
-    <geom type="box" pos="38.000 2.000 0.710" size="0.500 0.500 0.200" material="rail_mat" />
-    <geom type="box" pos="38.000 -2.000 0.710" size="0.500 0.500 0.200" material="rail_mat" />
-    <geom type="box" pos="38.000 0.0 1.410" size="0.500 2.500 0.500" material="ring_mat" />
-    <geom type="box" pos="40.000 0.0 0.260" size="1.000 1.500 0.250" material="stone_mat" />
-    <geom type="box" pos="42.000 0.0 0.260" size="1.000 2.500 0.250" material="stone_mat" />
-    <geom type="box" pos="42.000 2.000 0.685" size="0.500 0.500 0.175" material="rail_mat" />
-    <geom type="box" pos="42.000 -2.000 0.685" size="0.500 0.500 0.175" material="rail_mat" />
-    <geom type="box" pos="42.000 0.0 1.360" size="0.500 2.500 0.500" material="ring_mat" />
-    <geom type="box" pos="44.000 0.0 0.260" size="1.000 1.500 0.250" material="stone_mat" />
-    <geom type="box" pos="50.000 0.0 0.260" size="5.0 2.0 0.250" material="stone_mat" />
-    <geom type="box" pos="27.000 0.0 0.005" size="28.000 5.0 0.005" material="stone_mat" name="unified_floor" />
+    <geom type="box" pos="27.000 0.0 0.260" size="1.000 2.500 0.250" material="stone_mat" />
+    <geom type="box" pos="27.000 2.000 0.760" size="0.500 0.500 0.250" material="rail_mat" />
+    <geom type="box" pos="27.000 -2.000 0.760" size="0.500 0.500 0.250" material="rail_mat" />
+    <geom type="box" pos="27.000 0.0 1.510" size="0.500 2.500 0.500" material="ring_mat" />
+    <geom type="box" pos="29.000 0.0 0.260" size="1.000 1.500 0.250" material="stone_mat" />
+    <geom type="box" pos="31.000 0.0 0.260" size="1.000 2.500 0.250" material="stone_mat" />
+    <geom type="box" pos="31.000 2.000 0.710" size="0.500 0.500 0.200" material="rail_mat" />
+    <geom type="box" pos="31.000 -2.000 0.710" size="0.500 0.500 0.200" material="rail_mat" />
+    <geom type="box" pos="31.000 0.0 1.410" size="0.500 2.500 0.500" material="ring_mat" />
+    <geom type="box" pos="33.000 0.0 0.260" size="1.000 1.500 0.250" material="stone_mat" />
+    <geom type="box" pos="35.000 0.0 0.260" size="1.000 2.500 0.250" material="stone_mat" />
+    <geom type="box" pos="35.000 2.000 0.685" size="0.500 0.500 0.175" material="rail_mat" />
+    <geom type="box" pos="35.000 -2.000 0.685" size="0.500 0.500 0.175" material="rail_mat" />
+    <geom type="box" pos="35.000 0.0 1.360" size="0.500 2.500 0.500" material="ring_mat" />
+    <geom type="box" pos="37.000 0.0 0.260" size="1.000 1.500 0.250" material="stone_mat" />
+    <geom type="box" pos="43.000 0.0 0.260" size="5.0 2.0 0.250" material="stone_mat" />
+    <geom type="box" pos="23.500 0.0 0.005" size="24.500 5.0 0.005" material="stone_mat" name="unified_floor" />
   </worldbody>
 
     <actuator>
