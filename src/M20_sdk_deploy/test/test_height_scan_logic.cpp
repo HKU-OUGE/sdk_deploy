@@ -39,7 +39,7 @@ static void TestBodyToHorizon_Pitch90() {
 
 static void TestProjectAndBin_BoxAtFront() {
     // A 0.2 m tall box top surface at (x=0.5, y=0.0, z=-0.4) in body frame
-    // (i.e., body is 0.5 m above the box top). Synthesise 100 points
+    // (i.e., body is 0.4 m above the box top, since z=-0.4 in body frame). Synthesise 100 points
     // tightly clustered on the box top.
     std::vector<height_scan::Vec3f> points;
     for (int i = 0; i < 100; ++i) {
@@ -71,17 +71,19 @@ static void TestProjectAndBin_IndexCorners() {
     std::array<float, height_scan::GRID_N> obs{};
     std::array<bool, height_scan::GRID_N> valid{};
     height_scan::ProjectAndBin(points, 0.0f, 0.0f, obs, valid);
-    assert(valid[0]);
-    assert(valid[186]);
+    const int idx_near = height_scan::FlatIdx(0, 0);
+    const int idx_far  = height_scan::FlatIdx(16, 10);
+    assert(valid[idx_near]);
+    assert(valid[idx_far]);
     // obs = clip(-(-0.5) - 0.5, ...) = 0.0
-    assert(ApproxEq(obs[0], 0.0f, 1e-3f));
-    assert(ApproxEq(obs[186], 0.0f, 1e-3f));
+    assert(ApproxEq(obs[idx_near], 0.0f, 1e-3f));
+    assert(ApproxEq(obs[idx_far],  0.0f, 1e-3f));
     std::puts("[OK] TestProjectAndBin_IndexCorners");
 }
 
 static void TestProjectAndBin_PitchInvariance() {
     // Same world geometry, two configurations:
-    //   A. body level, point at world (1.0, 0.0, -0.4) — i.e. body-frame (1.0, 0.0, -0.4)
+    //   A. body level, point at world (0.6, 0.0, -0.4) — i.e. body-frame (1.0, 0.0, -0.4)
     //   B. body pitched +10°: same world point now expressed in body-frame is rotated.
     // Both should produce the same obs (height_scan is gravity-aligned).
     const float pitch = 10.0f * static_cast<float>(M_PI) / 180.0f;

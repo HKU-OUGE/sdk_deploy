@@ -80,7 +80,7 @@ inline void ProjectAndBin(const std::vector<Vec3f>& points_body,
     }
 
     for (int i = 0; i < GRID_N; ++i) {
-        if (std::isfinite(max_zh[i]) && max_zh[i] > -std::numeric_limits<float>::infinity()) {
+        if (std::isfinite(max_zh[i])) {
             obs_out[i] = std::clamp(-max_zh[i] - OBS_OFFSET, -OBS_CLIP, OBS_CLIP);
             valid_out[i] = true;
         }
