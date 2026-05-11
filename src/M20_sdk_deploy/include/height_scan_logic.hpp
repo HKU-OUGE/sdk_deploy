@@ -36,8 +36,10 @@ constexpr float OBS_CLIP       = 1.0f;
 constexpr int   BUFFER_LEN     = 10;
 constexpr float DEFAULT_FILL   = OBS_CLIP;  // = +1.0: "terrain far below / no hit" (safe default: implies clear floor, not obstacle clearance)
 
-// Flat index convention: row-major, x outer, y inner.
-inline int FlatIdx(int ix, int iy) { return ix * GRID_NY + iy; }
+// Flat index convention: row-major, y outer, x inner.
+// Matches IsaacLab grid_pattern(indexing="xy") → reshape(num_y, num_x) layout
+// used by training-side ElevationAE.
+inline int FlatIdx(int ix, int iy) { return iy * GRID_NX + ix; }
 
 // Rotation that maps body-frame vectors to horizon-aligned frame
 // (gravity-aligned, shares the body's yaw). Convention matches SDK RpyToRm.
