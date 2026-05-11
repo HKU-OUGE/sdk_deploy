@@ -5,9 +5,15 @@
 #include <cstdint>
 #include <vector>
 
-#include "types/common_types.h"   // Vec3f, Mat3f
+#include "types/common_types.h"   // types::Vec3f, types::Mat3f (re-exported below)
 
 namespace height_scan {
+
+// Re-export the SDK type aliases so code in this namespace can write
+// `Vec3f` / `Mat3f` directly (they live under ::types in common_types.h).
+using Vec3f = ::types::Vec3f;
+using Mat3f = ::types::Mat3f;
+
 
 // === Grid geometry (matches RayCaster training cfg) ===
 constexpr int   GRID_NX        = 17;        // forward-axis cells
@@ -24,7 +30,7 @@ constexpr float OBS_CLIP       = 1.0f;
 
 // === Ring buffer / fallback ===
 constexpr int   BUFFER_LEN     = 10;
-constexpr float DEFAULT_FILL   = OBS_CLIP;  // "no obstacle" when buffer empty
+constexpr float DEFAULT_FILL   = OBS_CLIP;  // = +1.0: "terrain far below / no hit" (safe default: implies clear floor, not obstacle clearance)
 
 // Flat index convention: row-major, x outer, y inner.
 inline int FlatIdx(int ix, int iy) { return ix * GRID_NY + iy; }
