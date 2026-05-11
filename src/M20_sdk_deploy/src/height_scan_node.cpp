@@ -56,11 +56,18 @@ private:
         // Pull all finite points into a flat vector (cheap; ~10k points typical).
         std::vector<height_scan::Vec3f> pts;
         pts.reserve(msg->width * msg->height);
-        sensor_msgs::PointCloud2ConstIterator<float> ix(*msg, "x");
-        sensor_msgs::PointCloud2ConstIterator<float> iy(*msg, "y");
-        sensor_msgs::PointCloud2ConstIterator<float> iz(*msg, "z");
-        for (; ix != ix.end(); ++ix, ++iy, ++iz) {
-            pts.emplace_back(*ix, *iy, *iz);
+        try {
+            sensor_msgs::PointCloud2ConstIterator<float> ix(*msg, "x");
+            sensor_msgs::PointCloud2ConstIterator<float> iy(*msg, "y");
+            sensor_msgs::PointCloud2ConstIterator<float> iz(*msg, "z");
+            for (; ix != ix.end(); ++ix, ++iy, ++iz) {
+                pts.emplace_back(*ix, *iy, *iz);
+            }
+        } catch (const std::runtime_error& e) {
+            RCLCPP_ERROR_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+                "[height_scan] malformed PointCloud2 (missing x/y/z field?): %s — frame dropped",
+                e.what());
+            return;
         }
 
         std::array<float, height_scan::GRID_N> obs_now{};
