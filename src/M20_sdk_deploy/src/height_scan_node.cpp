@@ -51,6 +51,15 @@ private:
             return;
         }
 
+        // Update-rate gating: target update_rate_hz_; skip frames arriving too fast.
+        const auto now = std::chrono::steady_clock::now();
+        const auto target_dt = std::chrono::duration<double>(1.0 / update_rate_hz_);
+        if (last_publish_time_.time_since_epoch().count() > 0 &&
+            (now - last_publish_time_) < std::chrono::duration_cast<std::chrono::steady_clock::duration>(target_dt)) {
+            return;
+        }
+        last_publish_time_ = now;
+
         const auto t0 = std::chrono::steady_clock::now();
 
         // Pull all finite points into a flat vector (cheap; ~10k points typical).
@@ -115,6 +124,9 @@ private:
     height_scan::HistoryBuffer history_;
     int process_count_ = 0;
     double total_time_ms_ = 0.0;
+
+    double update_rate_hz_ = 20.0;
+    std::chrono::steady_clock::time_point last_publish_time_{};
 };
 
 int main(int argc, char* argv[]) {
