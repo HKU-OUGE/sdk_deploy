@@ -16,15 +16,27 @@ using namespace std::chrono_literals;
 class HeightScanNode : public rclcpp::Node {
 public:
     HeightScanNode() : Node("height_scan_node") {
-        pub_ = this->create_publisher<std_msgs::msg::Float32MultiArray>(
-            "/scan/height_features_array", 10);
+        // Parameters with defaults matching height_scan_logic.hpp constants / Task 6/7 hardcodes.
+        this->declare_parameter<double>("update_rate_hz", 20.0);
+        this->declare_parameter<double>("min_imu_age_s", 0.1);
+        this->declare_parameter<std::string>("pointcloud_topic", "/LIDAR_POINT_CLOUD_MERGED");
+        this->declare_parameter<std::string>("imu_topic", "/IMU_DATA");
+        this->declare_parameter<std::string>("output_topic", "/scan/height_features_array");
+
+        update_rate_hz_ = this->get_parameter("update_rate_hz").as_double();
+        min_imu_age_s_  = this->get_parameter("min_imu_age_s").as_double();
+        const auto pc_topic     = this->get_parameter("pointcloud_topic").as_string();
+        const auto imu_topic    = this->get_parameter("imu_topic").as_string();
+        const auto output_topic = this->get_parameter("output_topic").as_string();
+
+        pub_ = this->create_publisher<std_msgs::msg::Float32MultiArray>(output_topic, 10);
 
         pc_sub_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
-            "/LIDAR_POINT_CLOUD_MERGED", rclcpp::SensorDataQoS(),
+            pc_topic, rclcpp::SensorDataQoS(),
             std::bind(&HeightScanNode::OnPointCloud, this, std::placeholders::_1));
 
         imu_sub_ = this->create_subscription<drdds::msg::ImuData>(
-            "/IMU_DATA", rclcpp::SensorDataQoS(),
+            imu_topic, rclcpp::SensorDataQoS(),
             std::bind(&HeightScanNode::OnImu, this, std::placeholders::_1));
 
         diag_timer_ = this->create_wall_timer(1s,
@@ -53,7 +65,7 @@ private:
         }
 
         const auto imu_age = (this->now() - last_imu_time_).seconds();
-        if (imu_age > 0.1) {
+        if (imu_age > min_imu_age_s_) {
             RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
                 "[height_scan] IMU stale (age=%.3fs), dropping pointcloud frame",
                 imu_age);
@@ -136,6 +148,7 @@ private:
     double total_time_ms_ = 0.0;
 
     double update_rate_hz_ = 20.0;
+    double min_imu_age_s_ = 0.1;
     std::chrono::steady_clock::time_point last_publish_time_{};
 };
 
