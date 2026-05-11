@@ -164,4 +164,16 @@ install(DIRECTORY launch
         DESTINATION share/${PROJECT_NAME}
 )
 
+# ================= 新增：编译 Height Scan 单元测试 =================
+add_executable(test_height_scan_logic test/test_height_scan_logic.cpp)
+target_include_directories(test_height_scan_logic PRIVATE
+        include
+        ${THIRD_PARTY}/eigen
+)
+ament_target_dependencies(test_height_scan_logic
+        grid_map_core
+)
+# 不安装 — 仅 dev 时跑
+# =================================================================
+
 ament_package()

@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "types/common_types.h"   // types::Vec3f, types::Mat3f (re-exported below)
+#include "utils/basic_function.hpp"  // RpyToRm
 
 namespace height_scan {
 
@@ -34,5 +35,11 @@ constexpr float DEFAULT_FILL   = OBS_CLIP;  // = +1.0: "terrain far below / no h
 
 // Flat index convention: row-major, x outer, y inner.
 inline int FlatIdx(int ix, int iy) { return ix * GRID_NY + iy; }
+
+// Rotation that maps body-frame vectors to horizon-aligned frame
+// (gravity-aligned, shares the body's yaw). Convention matches SDK RpyToRm.
+inline Mat3f BodyToHorizon(float roll, float pitch) {
+    return RpyToRm(Vec3f(roll, pitch, 0.0f));
+}
 
 }  // namespace height_scan
