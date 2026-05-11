@@ -87,4 +87,48 @@ inline void ProjectAndBin(const std::vector<Vec3f>& points_body,
     }
 }
 
+struct HistoryBuffer {
+    std::array<std::array<float, GRID_N>, BUFFER_LEN> frames{};
+    std::array<std::array<bool,  GRID_N>, BUFFER_LEN> valid{};
+    int head = 0;
+    bool initialised = false;
+};
+
+// Apply ring-buffer fallback: for each cell, prefer current frame; else most-recent valid
+// historical value; else DEFAULT_FILL. Then push current frame onto buffer.
+inline void ApplyHistory(HistoryBuffer& hist,
+                         const std::array<float, GRID_N>& obs_now,
+                         const std::array<bool,  GRID_N>& valid_now,
+                         std::array<float, GRID_N>& obs_out) {
+    if (!hist.initialised) {
+        for (int k = 0; k < BUFFER_LEN; ++k) {
+            hist.frames[k].fill(DEFAULT_FILL);
+            hist.valid[k].fill(false);
+        }
+        hist.initialised = true;
+    }
+
+    for (int i = 0; i < GRID_N; ++i) {
+        if (valid_now[i]) {
+            obs_out[i] = obs_now[i];
+        } else {
+            // Walk backwards from most recent: head-1, head-2, ... (modulo)
+            float fill = DEFAULT_FILL;
+            for (int k = 1; k <= BUFFER_LEN; ++k) {
+                int idx = (hist.head - k + BUFFER_LEN) % BUFFER_LEN;
+                if (hist.valid[idx][i]) {
+                    fill = hist.frames[idx][i];
+                    break;
+                }
+            }
+            obs_out[i] = fill;
+        }
+    }
+
+    // Push current frame onto ring buffer
+    hist.frames[hist.head] = obs_now;
+    hist.valid[hist.head]  = valid_now;
+    hist.head = (hist.head + 1) % BUFFER_LEN;
+}
+
 }  // namespace height_scan

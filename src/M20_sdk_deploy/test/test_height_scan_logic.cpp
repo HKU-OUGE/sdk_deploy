@@ -115,12 +115,52 @@ static void TestProjectAndBin_PitchInvariance() {
     std::puts("[OK] TestProjectAndBin_PitchInvariance");
 }
 
+static void TestRingBuffer_FillsFromHistory() {
+    height_scan::HistoryBuffer hist;
+
+    // Frame 0: cell 5 valid with obs=0.1, others invalid
+    std::array<float, height_scan::GRID_N> obs0{};
+    std::array<bool,  height_scan::GRID_N> valid0{};
+    obs0.fill(height_scan::DEFAULT_FILL);
+    obs0[5] = 0.1f;  valid0[5] = true;
+    std::array<float, height_scan::GRID_N> out0{};
+    height_scan::ApplyHistory(hist, obs0, valid0, out0);
+    assert(ApproxEq(out0[5], 0.1f));
+    assert(ApproxEq(out0[6], height_scan::DEFAULT_FILL));   // never seen, default
+
+    // Frame 1: cell 5 INVALID, expect history to fill it with 0.1
+    std::array<float, height_scan::GRID_N> obs1{};
+    std::array<bool,  height_scan::GRID_N> valid1{};
+    obs1.fill(height_scan::DEFAULT_FILL);
+    std::array<float, height_scan::GRID_N> out1{};
+    height_scan::ApplyHistory(hist, obs1, valid1, out1);
+    assert(ApproxEq(out1[5], 0.1f));     // from history
+    assert(ApproxEq(out1[6], height_scan::DEFAULT_FILL));
+
+    // Fill BUFFER_LEN+1 invalid frames — history of cell 5 should age out and fall to DEFAULT_FILL.
+    for (int k = 0; k < height_scan::BUFFER_LEN + 1; ++k) {
+        std::array<float, height_scan::GRID_N> obs_k{};
+        std::array<bool,  height_scan::GRID_N> valid_k{};
+        obs_k.fill(height_scan::DEFAULT_FILL);
+        std::array<float, height_scan::GRID_N> out_k{};
+        height_scan::ApplyHistory(hist, obs_k, valid_k, out_k);
+    }
+    std::array<float, height_scan::GRID_N> obs_late{};
+    std::array<bool,  height_scan::GRID_N> valid_late{};
+    obs_late.fill(height_scan::DEFAULT_FILL);
+    std::array<float, height_scan::GRID_N> out_late{};
+    height_scan::ApplyHistory(hist, obs_late, valid_late, out_late);
+    assert(ApproxEq(out_late[5], height_scan::DEFAULT_FILL));
+    std::puts("[OK] TestRingBuffer_FillsFromHistory");
+}
+
 int main() {
     TestBodyToHorizon_Identity();
     TestBodyToHorizon_Pitch90();
     TestProjectAndBin_BoxAtFront();
     TestProjectAndBin_IndexCorners();
     TestProjectAndBin_PitchInvariance();
+    TestRingBuffer_FillsFromHistory();
     std::puts("ALL TESTS PASSED");
     return 0;
 }
