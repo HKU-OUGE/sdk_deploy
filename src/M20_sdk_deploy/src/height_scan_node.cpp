@@ -41,6 +41,7 @@ private:
         const float deg2rad = static_cast<float>(M_PI / 180.0);
         latest_roll_.store(static_cast<float>(msg->data.roll) * deg2rad);
         latest_pitch_.store(static_cast<float>(msg->data.pitch) * deg2rad);
+        last_imu_time_ = this->now();   // rclcpp::Time
         imu_received_.store(true);
     }
 
@@ -48,6 +49,14 @@ private:
         if (!imu_received_.load()) {
             RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
                 "[height_scan] waiting for IMU before processing pointcloud");
+            return;
+        }
+
+        const auto imu_age = (this->now() - last_imu_time_).seconds();
+        if (imu_age > 0.1) {
+            RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+                "[height_scan] IMU stale (age=%.3fs), dropping pointcloud frame",
+                imu_age);
             return;
         }
 
@@ -120,6 +129,7 @@ private:
     std::atomic<float> latest_roll_{0.0f};
     std::atomic<float> latest_pitch_{0.0f};
     std::atomic<bool>  imu_received_{false};
+    rclcpp::Time last_imu_time_{0, 0, RCL_ROS_TIME};
 
     height_scan::HistoryBuffer history_;
     int process_count_ = 0;
