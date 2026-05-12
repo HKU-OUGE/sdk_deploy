@@ -27,13 +27,11 @@ find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(drdds REQUIRED)
 find_package(sensor_msgs REQUIRED)
-find_package(std_msgs REQUIRED)
 # ================= 新增：高程图(感知)相关依赖 =================
 find_package(grid_map_msgs REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
 find_package(grid_map_ros REQUIRED)
-find_package(grid_map_core REQUIRED)
 # ==============================================================
 
 set(THIRD_PARTY ${CMAKE_CURRENT_SOURCE_DIR}/third_party)
@@ -73,22 +71,6 @@ ament_target_dependencies(lidar_relay
         rclcpp
         sensor_msgs
 )
-# ==============================================================
-
-# ================= 新增：编译 Height Scan 节点 =================
-add_executable(height_scan_node src/height_scan_node.cpp)
-target_include_directories(height_scan_node PRIVATE
-        include
-        ${THIRD_PARTY}/eigen
-)
-ament_target_dependencies(height_scan_node
-        rclcpp
-        sensor_msgs
-        std_msgs
-        drdds
-        grid_map_core
-)
-install(TARGETS height_scan_node DESTINATION lib/${PROJECT_NAME})
 # ==============================================================
 
 # ================= 新增：编译 C++ 版地图接收节点 =================
@@ -163,17 +145,5 @@ install(TARGETS rl_deploy lidar_relay map_receiver_node lidar_point_receive_node
 install(DIRECTORY launch
         DESTINATION share/${PROJECT_NAME}
 )
-
-# ================= 新增：编译 Height Scan 单元测试 =================
-add_executable(test_height_scan_logic test/test_height_scan_logic.cpp)
-target_include_directories(test_height_scan_logic PRIVATE
-        include
-        ${THIRD_PARTY}/eigen
-)
-ament_target_dependencies(test_height_scan_logic
-        grid_map_core
-)
-# 不安装 — 仅 dev 时跑
-# =================================================================
 
 ament_package()
