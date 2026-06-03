@@ -152,9 +152,22 @@ colcon build --packages-select m20_sdk_deploy --cmake-args -DBUILD_PLATFORM=arm
 
 
 sudo su # Root
-source /opt/ros/foxy/setup.bash #source ROS2 env
+source /opt/ros/foxy/setup.bash # source ROS2 env
 source /opt/robot/scripts/setup_ros2.sh
-ros2 service call /SDK_MODE drdds/srv/StdSrvInt32 command:\ 200 # /200 is /JOINTS_DATA topic frequency, recommended below 500 Hz. This value can only be factors of 1000.
+ros2 service call /SDK_MODE drdds/srv/StdSrvInt32 "{command: 200}" # 200 is /JOINTS_DATA frequency. Recommended below 500 Hz. This value can only be factors of 1000.
+
+# Start and enable LIO perception before running sensor policies.
+# The systemd service starts the lio_ddsnode process. The start.sh script sends
+# the runtime enable command (lio_command 1); it is still needed after reboot.
+systemctl status lio_perception.service height_map_nav.service --no-pager
+systemctl restart lio_perception.service height_map_nav.service
+/opt/robot/share/lio_perception/scripts/start.sh
+
+# Optional read-only checks. Expected: /CLOUD_REGISTERED_BODY and /LIO_ODOM at ~10 Hz,
+# /IMU_DATA at high rate, and /JOINTS_DATA near the SDK_MODE frequency.
+ros2 topic list | grep -E "CLOUD_REGISTERED_BODY|LIO_ODOM|height_map|IMU_DATA|JOINTS_DATA"
+ros2 topic hz /CLOUD_REGISTERED_BODY
+ros2 topic hz /LIO_ODOM
 
 # Run
 source /opt/ros/foxy/setup.bash #source ROS2 env
@@ -162,8 +175,8 @@ source /opt/robot/scripts/setup_ros2.sh
 source install/setup.bash
 ros2 run m20_sdk_deploy rl_deploy
 
-# exit sdk mode：
-ros2 service call /SDK_MODE drdds/srv/StdSrvInt32 command:\ 0
+# exit sdk mode:
+ros2 service call /SDK_MODE drdds/srv/StdSrvInt32 "{command: 0}"
 
 # keyboard control
 Note: When the robot dog stands up, it may become stuck due to self-collision in the simulation. This is not a bug; please try again.
@@ -172,3 +185,72 @@ Note: When the robot dog stands up, it may become stuck due to self-collision in
 - wasd：forward/leftward/backward/rightward
 - qe：clockwise/counter clockwise
 ```
+
+# Unified Policy with Elevation (noisy_elevation)
+
+新的 `policy/unified_policy.onnx`（由 `rl_sensor_control_state` 加载）在原有 LiDAR scan 之外**新增了 elevation map (height_scan)**。运行器 `M20SensorPolicyRunner` 会从 ONNX 输入 0 (`proprio_and_env`) 的 shape **自适应**感知维度，无需手改常量：
+
+| 策略 | `proprio_and_env` | 感知来源 |
+|---|---|---|
+| 旧 scan 策略 (platform/crawl) | `[1, 1049]` = proprio 57 + scan 992 | `/scan/multi_layer_features_array` (旧 `lidar_to_scan.py`) |
+| 新 unified + elevation | `[1, 748]` = proprio 57 + noisy_elevation 691 | `/perception/noisy_elevation_array` (新节点) |
+| gap + elevation | `[1, 496]` = proprio 57 + height/scan 439 | `/perception/noisy_elevation_array` 前 439 维 |
+
+`noisy_elevation` 顺序写死：`[ height_scan(187) | forward_scan(252) | backward_scan(252) ] = 691`。顺序错位不会报错，只会输出错误动作。
+
+## 感知节点 `scripts/noisy_elevation_node.py`
+
+部署在感知机 (106)，发布完整 691 维数组到 `/perception/noisy_elevation_array`：
+- **forward/backward_scan (252 each)**：点云按 `multi_pitch_arc` 几何分格（pitch 12 档 ∈[-25,25]°，azimuth 21 档 ∈[-45,45]°，boresight ±X，flatten `k=pitch*21+az`），归一化 `clip(d/2.5,0,1)`、`<0.3m→1.0`。
+- **height_scan (187)**：17×11 @0.1m yaw 网格，`clamp(-terrain_z_base - 0.5, -1, 1)`，terrain 取自 base 系高程网格；**不依赖 odom 绝对 z**。
+
+参数：`lidar_topic`（默认 `/LIDAR_SIM_RAW`；真机 `/CLOUD_REGISTERED_BODY`）、`height_topic`（默认 `/height_map`）。
+
+```bash
+# Sim
+python3 src/M20_sdk_deploy/scripts/noisy_elevation_node.py
+
+# 真机 (106)
+python3 src/M20_sdk_deploy/scripts/noisy_elevation_node.py \
+  --ros-args -p lidar_topic:=/CLOUD_REGISTERED_BODY -p height_topic:=/height_map
+```
+
+## 真机注意事项（重要）
+
+**① LIO 启动顺序** — `lio_perception.service` 只负责启动 `lio_ddsnode` 进程；重启后还需要运行 `start.sh` 发送 `lio_command 1`，否则 `/CLOUD_REGISTERED_BODY` 和 `/LIO_ODOM` 可能只有 publisher 但没有实际数据：
+```bash
+sudo su
+source /opt/ros/foxy/setup.bash
+source /opt/robot/scripts/setup_ros2.sh
+systemctl restart lio_perception.service height_map_nav.service
+/opt/robot/share/lio_perception/scripts/start.sh
+```
+
+**② DDS profile** — 在机器人本机 (103) 上优先使用 README 中的环境：
+```bash
+source /opt/ros/foxy/setup.bash
+source /opt/robot/scripts/setup_ros2.sh
+```
+如果是在外部电脑或另一台机载电脑上订阅感知话题，且 `ros2 topic list/info` 能发现 `/CLOUD_REGISTERED_BODY`、`/LIO_ODOM`、`/height_map` 但收不到样本，再尝试覆盖为 builtin profile：
+```bash
+source /opt/robot/scripts/setup_ros2.sh
+export FASTRTPS_DEFAULT_PROFILES_FILE=/opt/robot/fastdds_profile.xml   # builtin，须在 setup 之后
+```
+
+**③ 开启高程图** — LIO 自带的 `/HEIGHT_POINTS`/`/HEIGHT_IMAGE` 是关闭的**静态占位**（恒 -0.4，stamp=0），勿用。真实高程来自 `height_map_nav` 的 `/height_map`（base_link，81×81 @0.1m），需先开启（纯感知开关，不会让机器人动作）：
+```bash
+ros2 service call /HEIGHT_MAP_ENABLE drdds/srv/StdSrvInt32 "{command: 1}"   # 0 = 关闭
+```
+它依赖 `/CLOUD_REGISTERED_BODY`(~10Hz) + `/LIO_ODOM` + `/IMU_YESENSE` 输入。
+
+`height_map_nav` 没有类似 LIO 的 `start.sh`。如果 `/HEIGHT_MAP_ENABLE` 调用不返回，直接把 DDS 配置默认开启后重启服务：
+```bash
+sudo cp /opt/robot/share/height_map_nav/config/height_map_dds.yaml \
+  /opt/robot/share/height_map_nav/config/height_map_dds.yaml.bak
+sudo sed -i "s/^default_enable:.*/default_enable: true/" \
+  /opt/robot/share/height_map_nav/config/height_map_dds.yaml
+sudo systemctl restart height_map_nav.service
+```
+日志中应出现 `default_enable: 1` 和 `Data freq(Hz): Cloud=10 Odom=10 IMU=200` 左右。
+
+> 注：`/SDK_MODE ... 200` 进入 SDK 模式后机器人会受控动作，需配合外部急停按钮流程；详见硬件文档。

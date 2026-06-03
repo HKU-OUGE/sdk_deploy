@@ -27,6 +27,7 @@ try:
     from builtin_interfaces.msg import Time
     from drdds.msg import ImuData, JointsData, JointsDataCmd, MetaType, ImuDataValue, JointsDataValue, JointData, JointDataCmd, GamepadData
     from sensor_msgs.msg import PointCloud2, PointField
+    from nav_msgs.msg import Odometry
     from mujoco_lidar import MjLidarWrapper, scan_gen
 except ImportError as e:
     print(f"[Critical Error] Import failed: {e}", file=sys.stderr, flush=True)
@@ -151,6 +152,7 @@ class MuJoCoSimulationNode(Node):
         self.received_scan_array = None
         # ElevationAE 已从 sim/deploy 链路完全移除；不再订阅 /elevation_map_remote。
         self.world_lidar_pts = np.empty((0, 3))
+        self.world_height_pts = np.empty((0, 3))
         self.vis_geoms_initialized = False
 
         self.num_lasers = 32
@@ -189,6 +191,21 @@ class MuJoCoSimulationNode(Node):
         self.viewer = mujoco.viewer.launch_passive(self.model, self.data) if USE_VIEWER else None
 
         self.tf_broadcaster = TransformBroadcaster(self)
+
+        # ===== Phase4: 给新感知节点 (noisy_elevation_node) 喂真机同名话题 =====
+        # /LIO_ODOM (nav_msgs/Odometry, map系) + /height_map (PointCloud2, base_link, 与真机 height_map_nav 同名)
+        # 决策④: 注入 z 漂移噪声 + 高程噪声/空洞, 避免 GT 完美掩盖 sim2real 问题
+        self.odom_pub = self.create_publisher(Odometry, '/LIO_ODOM', 10)
+        self.height_pub = self.create_publisher(PointCloud2, '/height_map', 10)
+        hm_x = np.round(np.arange(-1.0, 1.0001, 0.1), 3)   # 21 (覆盖 footprint x∈[-0.8,0.8] + 余量)
+        hm_y = np.round(np.arange(-0.7, 0.7001, 0.1), 3)   # 15 (覆盖 y∈[-0.5,0.5] + 余量)
+        HMX, HMY = np.meshgrid(hm_x, hm_y)
+        self.hm_cx = HMX.ravel().astype(np.float64)
+        self.hm_cy = HMY.ravel().astype(np.float64)
+        self.hm_n = int(self.hm_cx.size)
+        self.hm_noise_std = 0.02     # 高程噪声 std (m)
+        self.hm_hole_prob = 0.05     # 空洞比例
+        self.odom_z_drift = 0.0      # /LIO_ODOM z 慢漂移 (随机游走)
 
     def _set_initial_pose(self, key: str):
         if key in JOINT_INIT:
@@ -268,6 +285,80 @@ class MuJoCoSimulationNode(Node):
         t.transform.rotation.w = float(base_quat[0])
         
         self.tf_broadcaster.sendTransform(t)
+
+    def _publish_lio_odom(self, step):
+        """发 /LIO_ODOM (nav_msgs/Odometry, map系)，模拟真机 LIO。决策④: z 慢漂移+噪声。"""
+        base_pos = self.data.qpos[:3]
+        base_quat = self.data.qpos[3:7]   # (w, x, y, z)
+        self.odom_z_drift = float(np.clip(self.odom_z_drift + np.random.normal(0.0, 5e-4), -0.05, 0.05))
+        z_noisy = float(base_pos[2] + self.odom_z_drift + np.random.normal(0.0, 5e-3))
+        odom = Odometry()
+        odom.header.stamp = self.get_clock().now().to_msg()
+        odom.header.frame_id = 'map'
+        odom.child_frame_id = 'base_link'
+        odom.pose.pose.position.x = float(base_pos[0])
+        odom.pose.pose.position.y = float(base_pos[1])
+        odom.pose.pose.position.z = z_noisy
+        odom.pose.pose.orientation.x = float(base_quat[1])
+        odom.pose.pose.orientation.y = float(base_quat[2])
+        odom.pose.pose.orientation.z = float(base_quat[3])
+        odom.pose.pose.orientation.w = float(base_quat[0])
+        self.odom_pub.publish(odom)
+
+    def _publish_height_map(self, step):
+        """发 /height_map (PointCloud2, base_link)，与真机 height_map_nav 同名同语义。
+
+        每个 base-yaw 网格点向下 mj_ray 取地形世界 z；只接受 worldbody(body 0)命中
+        (= 排除机器人腿/轮，命中机器人的格→空洞)。值 = terrain_world_z - base_z = terrain_z_base。
+        感知节点据此算 height_scan = -terrain_z_base - 0.5。决策④: 注入高程噪声 + 空洞。
+        """
+        base_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "base_link")
+        base_pos = self.data.xpos[base_id]
+        yaw = float(self.quaternion_to_euler(self.data.qpos[3:7])[2])   # yaw 对齐(训练 ray_alignment='yaw')
+        c, s = math.cos(yaw), math.sin(yaw)
+        wx = base_pos[0] + c * self.hm_cx - s * self.hm_cy
+        wy = base_pos[1] + s * self.hm_cx + c * self.hm_cy
+        origin_z = float(base_pos[2]) + 2.0
+        down = np.array([0.0, 0.0, -1.0], dtype=np.float64)
+        terrain_z = np.full(self.hm_n, np.nan, dtype=np.float64)
+        gid = np.zeros(1, dtype=np.int32)
+        for i in range(self.hm_n):
+            pnt = np.array([wx[i], wy[i], origin_z], dtype=np.float64)
+            dist = mujoco.mj_ray(self.model, self.data, pnt, down, self.geomgroup, 1, base_id, gid)
+            if dist >= 0.0 and gid[0] >= 0 and int(self.model.geom_bodyid[gid[0]]) == 0:
+                terrain_z[i] = (origin_z - dist) - float(base_pos[2])   # terrain_z_base
+        terrain_z += np.random.normal(0.0, self.hm_noise_std, self.hm_n)   # 高程噪声
+        terrain_z[np.random.random(self.hm_n) < self.hm_hole_prob] = np.nan  # 空洞
+
+        valid_height = np.isfinite(terrain_z)
+        if np.any(valid_height):
+            self.world_height_pts = np.stack([
+                wx[valid_height],
+                wy[valid_height],
+                terrain_z[valid_height] + float(base_pos[2]),
+            ], axis=1)
+        else:
+            self.world_height_pts = np.empty((0, 3))
+
+        pts = np.stack([self.hm_cx.astype(np.float32),
+                        self.hm_cy.astype(np.float32),
+                        terrain_z.astype(np.float32)], axis=1)
+        msg = PointCloud2()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.header.frame_id = 'base_link'
+        msg.height = 1
+        msg.width = self.hm_n
+        msg.fields = [
+            PointField(name='x', offset=0, datatype=PointField.FLOAT32, count=1),
+            PointField(name='y', offset=4, datatype=PointField.FLOAT32, count=1),
+            PointField(name='z', offset=8, datatype=PointField.FLOAT32, count=1),
+        ]
+        msg.is_bigendian = False
+        msg.point_step = 12
+        msg.row_step = msg.point_step * msg.width
+        msg.is_dense = False
+        msg.data = pts.astype(np.float32).tobytes()
+        self.height_pub.publish(msg)
 
     def _trace_single_lidar(self, site_name, base_pos, base_mat):
         site_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_SITE, site_name)
@@ -436,7 +527,10 @@ class MuJoCoSimulationNode(Node):
                 self.timestamp = step * DT
                 if step % 5 == 0: self._publish_robot_state(step)
                 
-                if step % int(0.1 / DT) == 0: self._publish_lidar_state(step)
+                if step % int(0.1 / DT) == 0:
+                    self._publish_lidar_state(step)
+                    self._publish_lio_odom(step)        # Phase4: /LIO_ODOM
+                    self._publish_height_map(step)      # Phase4: /height_map
                 
                 if self.use_joystick and step % 10 == 0: self.joystick.update()
                     
@@ -460,6 +554,15 @@ class MuJoCoSimulationNode(Node):
                             for i in range(num_pts):
                                 self.viewer.user_scn.geoms[geom_idx].pos[:] = vis_pts[i]
                                 self.viewer.user_scn.geoms[geom_idx].rgba[:] = [0.0, 1.0, 0.0, 0.6]
+                                geom_idx += 1
+
+                        # ================= Height map (红色) =================
+                        if hasattr(self, 'world_height_pts') and len(self.world_height_pts) > 0:
+                            vis_height = self.world_height_pts
+                            num_height = min(len(vis_height), max_g - geom_idx)
+                            for i in range(num_height):
+                                self.viewer.user_scn.geoms[geom_idx].pos[:] = vis_height[i]
+                                self.viewer.user_scn.geoms[geom_idx].rgba[:] = [1.0, 0.0, 0.0, 0.9]
                                 geom_idx += 1
                                 
                         # ================= 网络输入：半球 hemispherical scan 992 点 (亮蓝色) =================

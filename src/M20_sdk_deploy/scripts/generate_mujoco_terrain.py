@@ -36,7 +36,7 @@ class MujocoTerrainGenerator:
         ET.SubElement(self.worldbody, "geom", type="box",
                       pos=f"{1.0 + ramp_x_len/2:.3f} 0.0 {self.floor_z + ramp_dz/2 - 0.05:.3f}",
                       size=f"{ramp_actual_len/2:.3f} 2.0 0.05",
-                      euler=f"0 {pitch:.3f} 0", material="stone_mat", name="start_ramp")
+                      euler=f"0 {np.degrees(pitch):.3f} 0", material="stone_mat", name="start_ramp")
 
         self.current_x = 1.0 + ramp_x_len
         # 生成第一段平地缓冲
@@ -118,26 +118,25 @@ class MujocoTerrainGenerator:
         self.current_x += (num_rails * gap)
         self.add_platform(2.0)
 
-    # 5. pit / 高台
-    def add_pit(self, pit_depth=0.4, gap_length=1.0, double_pit=True, width=3.0):
+    # 5. 凸起高台 (连续赛道 + 局部高台)
+    def add_pit(self, pit_depth=0.2, gap_length=2.0, double_pit=True, width=3.0):
+        """连续赛道 (track_z) 上的凸起高台 —— 不再掉到地板，赛道全程连续。
+        - 高台前先铺 gap_length 长的 track_z 跑道 (连续，不落差)。
+        - 再放一个实心高台 box，顶面 = track_z + pit_depth (高出赛道 pit_depth，机器人上下翻越)。
+        - pit_depth = 高台高出赛道的高度 (m)。
         """
-        在主赛道之间放置 0-1m 高度的实心高台 box。
-        - pit_depth = 高台总高度（box 顶面 z 坐标），直接坐在 mujoco 默认地平面 z=0 上。
-        - 高台前后留 gap_length 长度的空缺，机器人会落到默认地平面上（无需额外坑底几何）。
-        - pit_depth < track_z (0.5)：高台低于赛道，机器人需先下后上。
-        - pit_depth > track_z：真正的"高台"，机器人需爬上去再下来。
-        """
-        print(f"Generating Solid Pit/Platform (Height={pit_depth}) at X > {self.current_x}...")
+        print(f"Generating Raised Platform (h_above_track={pit_depth}) at X > {self.current_x}...")
         num_pits = 2 if double_pit else 1
         plat_len = 1.0
 
         for _ in range(num_pits):
-            # 留出 gap_length 空缺，机器人会落到统一薄底板 (z=floor_z) 上
-            self.current_x += gap_length
+            # 高台前的连续赛道 (铺 track_z 平地，current_x += gap_length)
+            self.add_platform(length=gap_length, width=width)
 
-            # --- 单个实心高台 box，坐在统一薄底板上 ---
-            h_plat = pit_depth
-            z_center_plat = self.floor_z + h_plat / 2.0
+            # --- 凸起高台 box：实心，从 floor_z 一直到 track_z + pit_depth ---
+            top_z = self.track_z + pit_depth
+            h_plat = top_z - self.floor_z
+            z_center_plat = (self.floor_z + top_z) / 2.0
             ET.SubElement(self.worldbody, "geom", type="box",
                           pos=f"{self.current_x + plat_len/2:.3f} 0.0 {z_center_plat:.3f}",
                           size=f"{plat_len/2:.3f} {width/2:.3f} {h_plat/2:.3f}", material="stone_mat")
@@ -195,7 +194,7 @@ class MujocoTerrainGenerator:
         pitch_1 = -angle_rad if not inverted else angle_rad
         ET.SubElement(self.worldbody, "geom", type="box", pos=f"{x_1:.3f} 0.0 {z_1:.3f}",
                       size=f"{length/2 / np.cos(angle_rad):.3f} {width/2:.3f} {thickness/2:.3f}",
-                      euler=f"0 {pitch_1:.3f} 0", material="stone_mat")
+                      euler=f"0 {np.degrees(pitch_1):.3f} 0", material="stone_mat")
         
         plat_len = 2.0
         x_plat = start_x + ramp_x_len + plat_len / 2
@@ -208,30 +207,33 @@ class MujocoTerrainGenerator:
         pitch_2 = angle_rad if not inverted else -angle_rad
         ET.SubElement(self.worldbody, "geom", type="box", pos=f"{x_2:.3f} 0.0 {z_2:.3f}",
                       size=f"{length/2 / np.cos(angle_rad):.3f} {width/2:.3f} {thickness/2:.3f}",
-                      euler=f"0 {pitch_2:.3f} 0", material="stone_mat")
+                      euler=f"0 {np.degrees(pitch_2):.3f} 0", material="stone_mat")
 
         self.current_x += (ramp_x_len * 2 + plat_len)
         self.add_platform(2.0)
 
-    # 11. Hurdle
-    def add_hurdle(self, hurdle_height=0.4, width=None, bar_thickness=None):
+    # 11. Hurdle (crawl-mode floating bar, aligned with rl_training course terrain)
+    def add_hurdle(self, hurdle_height=0.4, width=None, bar_thickness=None, bar_vertical_height=0.30):
         """
-        生成跨栏地形，横杆悬空，机器人可以跳过或钻过。
-        :param hurdle_height: 跨栏高度
-        :param width: 跨栏宽度（跨越跑道方向），如果不传则默认为 3.0
-        :param bar_thickness: 横杆的粗细（长度和厚度），如果不传则默认为 0.08
+        生成 rl_training course 风格的 crawl-mode hurdle：
+        - 地板连续，障碍长度 0.5m。
+        - hurdle_height 是横杆底部到主赛道顶面的 clearance。
+        - bar_thickness 是行进方向厚度/侧柱厚度，默认 0.08m。
+        - bar_vertical_height 是横杆竖向高度，rl_training 中为 0.30m。
         """
-        # 如果没有传入数值，则沿用之前的逻辑默认值
         if width is None:
             width = 3.0
         if bar_thickness is None:
             bar_thickness = 0.08
 
-        print(f"Generating Hurdle (Height={hurdle_height}, Width={width}, Thickness={bar_thickness}) at X > {self.current_x}...")
+        print(
+            f"Generating Crawl Hurdle (Clearance={hurdle_height}, Width={width}, "
+            f"Thickness={bar_thickness}, BarZ={bar_vertical_height}) at X > {self.current_x}..."
+        )
         start_x = self.current_x
         
-        # 底部通行地台 (实心 box，从 floor_z 到 track_z)
-        plat_len = 2.0
+        # 底部通行地台：rl_training hurdle patch 长度约 0.5m，地板连续。
+        plat_len = 0.5
         h_base = self.track_z - self.floor_z
         z_base_center = (self.floor_z + self.track_z) / 2
         ET.SubElement(self.worldbody, "geom", type="box",
@@ -241,7 +243,7 @@ class MujocoTerrainGenerator:
         # 跨栏的中心X坐标
         hurdle_x = start_x + plat_len/2
         
-        # 左侧立柱 (延伸到横杆高度)
+        # 左右侧细柱：柱顶到横杆底部，保持 clearance = hurdle_height。
         left_y = width/2 - bar_thickness/2
         ET.SubElement(self.worldbody, "geom", type="box", pos=f"{hurdle_x:.3f} {left_y:.3f} {self.track_z + hurdle_height/2:.3f}",
                       size=f"{bar_thickness/2:.3f} {bar_thickness/2:.3f} {hurdle_height/2:.3f}", material="rail_mat")
@@ -251,11 +253,10 @@ class MujocoTerrainGenerator:
         ET.SubElement(self.worldbody, "geom", type="box", pos=f"{hurdle_x:.3f} {right_y:.3f} {self.track_z + hurdle_height/2:.3f}",
                       size=f"{bar_thickness/2:.3f} {bar_thickness/2:.3f} {hurdle_height/2:.3f}", material="rail_mat")
         
-        # 水平横杆 (跨越跑道宽度)
-        # 这里的 bar_thickness 会同时影响 X 方向（长度）和 Z 方向（厚度）
-        bar_z = self.track_z + hurdle_height + bar_thickness/2
+        # 水平横杆：x 厚度 0.08m，z 高度 0.30m；底部在 track_z + hurdle_height。
+        bar_z = self.track_z + hurdle_height + bar_vertical_height/2
         ET.SubElement(self.worldbody, "geom", type="box", pos=f"{hurdle_x:.3f} 0.0 {bar_z:.3f}",
-                      size=f"{bar_thickness/2:.3f} {width/2:.3f} {bar_thickness/2:.3f}", material="ring_mat")
+                      size=f"{bar_thickness/2:.3f} {width/2:.3f} {bar_vertical_height/2:.3f}", material="ring_mat")
 
         self.current_x += plat_len
         self.add_platform(2.0)
@@ -286,10 +287,13 @@ class MujocoTerrainGenerator:
         print(f"\nSuccessfully generated terrain file: {self.output_file}")
 
 if __name__ == "__main__":
-    gen = MujocoTerrainGenerator("m20_terrain.xml")
+    # 默认写到 sim 读取的位置 (相对本脚本路径), 直接覆盖原有 cfg —— 无需 cd 或 env -C
+    _here = os.path.dirname(os.path.abspath(__file__))
+    OUT = os.path.normpath(os.path.join(_here, "..", "interface", "robot", "simulation", "m20_terrain.xml"))
+    gen = MujocoTerrainGenerator(OUT)
     
     # 1. pyramid_stairs (正向楼梯)
-    # gen.add_stairs(steps=4, step_run=0.3, step_rise=0.15, inverted=False)
+    gen.add_stairs(steps=10, step_run=0.3, step_rise=0.15, inverted=False)
     
     # # 3. hf_pyramid_slope
     # gen.add_slope(length=3.0, slope=0.4, inverted=False)
@@ -302,13 +306,16 @@ if __name__ == "__main__":
     # gen.add_hurdle(hurdle_height=0.2, width=3.0) 
     # 6. Hurdle (跨栏-钻)
     # gen.add_hurdle(hurdle_height=0.6, width=3.0)
-    gen.add_pit(pit_depth=0.4, gap_length=4.0, double_pit=False)
-    gen.add_pit(pit_depth=0.5, gap_length=4.0, double_pit=False)
-    gen.add_pit(pit_depth=0.6, gap_length=4.0, double_pit=False)
-    # gen.add_pit(pit_depth=0.7, gap_length=4.0, double_pit=False)
-    gen.add_hurdle(hurdle_height=0.5, bar_thickness=1.0, width = 5.0)
-    gen.add_hurdle(hurdle_height=0.4, bar_thickness=1.0, width = 5.0)
-    gen.add_hurdle(hurdle_height=0.35, bar_thickness=1.0, width = 5.0)
+    # 凸起高台 (连续赛道, 高出赛道 pit_depth; gap_length=前置跑道长度)。高度可按需调。
+    gen.add_pit(pit_depth=0.2, gap_length=2.0, double_pit=False)
+    gen.add_pit(pit_depth=0.35, gap_length=2.0, double_pit=False)
+    gen.add_pit(pit_depth=0.5, gap_length=2.0, double_pit=False)
+    # Gap 缝隙地形: 跨越 30cm / 40cm 宽的坑 (深 0.5m, 坑底降到赛道下方, 中间留 track_z 平台)
+    gen.add_gap(gap_length=0.3, gap_depth=0.5, double_gap=False)
+    gen.add_gap(gap_length=0.4, gap_depth=0.5, double_gap=False)
+    gen.add_hurdle(hurdle_height=0.50, bar_thickness=0.08, width=3.0)
+    gen.add_hurdle(hurdle_height=0.40, bar_thickness=0.08, width=3.0)
+    gen.add_hurdle(hurdle_height=0.35, bar_thickness=0.08, width=3.0)
 
 
     # 7. Gap 地形 (4种不同宽度)

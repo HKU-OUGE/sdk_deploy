@@ -5,7 +5,8 @@
 # 当前 4 个 pane:
 #   - MuJoCo:       仿真 + lidar 点云发布 (/LIDAR_SIM_RAW)
 #   - UDP SDK:      跨机器 lidar 接收（同机器 sim2sim 实际不需要，但保留以兼容真机部署）
-#   - LiDAR2Scan:   订阅 /LIDAR_SIM_RAW，输出 992-dim 半球 hemispherical scan
+#   - NoisyElev:    订阅 /LIDAR_SIM_RAW + /height_map + /LIO_ODOM，输出 691-dim noisy_elevation
+#                   (新 unified+elevation 策略=748; 旧 1049 scan 策略改回 lidar_to_scan.py)
 #   - RL Deploy:    onnx policy + state machine
 SDK_DIR="$HOME/Software/sdk_deploy"
 DOMAIN_ID=1
@@ -14,7 +15,7 @@ PRE_SDK="conda deactivate 2>/dev/null; export ROS_DOMAIN_ID=$DOMAIN_ID; cd $SDK_
 
 CMD1="$PRE_SDK && python3 src/M20_sdk_deploy/interface/robot/simulation/mujoco_simulation_ros2.py; exec zsh"
 CMD4="$PRE_SDK && python3 src/M20_sdk_deploy/scripts/udp_bridge_sdk_node.py; exec zsh"
-CMD5="$PRE_SDK && python3 src/M20_sdk_deploy/scripts/lidar_to_scan.py; exec zsh"
+CMD5="$PRE_SDK && python3 src/M20_sdk_deploy/scripts/noisy_elevation_node.py; exec zsh"
 CMD6="$PRE_SDK && ros2 run m20_sdk_deploy rl_deploy; exec zsh"
 
 if command -v terminator &>/dev/null; then
@@ -37,12 +38,12 @@ python3 src/M20_sdk_deploy/scripts/udp_bridge_sdk_node.py
 exec zsh
 SCRIPT
 
-    cat > /tmp/sim_cmd_lidar2scan.sh << 'SCRIPT'
+    cat > /tmp/sim_cmd_noisy_elev.sh << 'SCRIPT'
 #!/bin/zsh
 conda deactivate 2>/dev/null
 export ROS_DOMAIN_ID=1
 cd ~/Software/sdk_deploy && source install/setup.zsh
-python3 src/M20_sdk_deploy/scripts/lidar_to_scan.py
+python3 src/M20_sdk_deploy/scripts/noisy_elevation_node.py
 exec zsh
 SCRIPT
 
@@ -106,12 +107,12 @@ SCRIPT
       parent = child1
       order = 1
       ratio = 0.5
-    [[[lidar2scan]]]
+    [[[noisy_elev]]]
       type = Terminal
       parent = row2
       order = 0
-      title = LiDAR2Scan
-      command = /tmp/sim_cmd_lidar2scan.sh
+      title = NoisyElev(691)
+      command = /tmp/sim_cmd_noisy_elev.sh
     [[[rl_deploy]]]
       type = Terminal
       parent = row2
@@ -127,8 +128,8 @@ else
     gnome-terminal --title="MuJoCo"          -- zsh -ic "$CMD1" &
     sleep 1
     gnome-terminal --title="UDP SDK"         -- zsh -ic "$CMD4" &
-    gnome-terminal --title="LiDAR2Scan"      -- zsh -ic "$CMD5" &
+    gnome-terminal --title="NoisyElev"       -- zsh -ic "$CMD5" &
     gnome-terminal --title="RL Deploy"       -- zsh -ic "$CMD6" &
 fi
 
-echo "All nodes launched (4 panes: MuJoCo / UDP SDK / LiDAR2Scan / RL Deploy)."
+echo "All nodes launched (4 panes: MuJoCo / UDP SDK / NoisyElev / RL Deploy)."
