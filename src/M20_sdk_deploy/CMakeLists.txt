@@ -146,4 +146,20 @@ install(DIRECTORY launch
         DESTINATION share/${PROJECT_NAME}
 )
 
+# Runtime assets used by rl_deploy. State classes resolve policies relative to
+# the installed executable path: lib/${PROJECT_NAME}/../../policy.
+install(DIRECTORY policy
+        DESTINATION .
+)
+
+install(DIRECTORY scripts
+        DESTINATION share/${PROJECT_NAME}
+        USE_SOURCE_PERMISSIONS
+)
+
+install(FILES
+        ${THIRD_PARTY}/onnxruntime/${BUILD_PLATFORM}/lib/libonnxruntime.so
+        DESTINATION lib/onnxruntime
+)
+
 ament_package()
