@@ -254,3 +254,41 @@ sudo systemctl restart height_map_nav.service
 日志中应出现 `default_enable: 1` 和 `Data freq(Hz): Cloud=10 Odom=10 IMU=200` 左右。
 
 > 注：`/SDK_MODE ... 200` 进入 SDK 模式后机器人会受控动作，需配合外部急停按钮流程；详见硬件文档。
+
+## 本机一键真机部署脚本
+
+WiFi 拓扑下可以在本机依次启动 103/106/手柄/网页高度图可视化：
+
+```bash
+cd /home/ouge/Software/sdk_deploy
+python3 src/M20_sdk_deploy/scripts/real_robot_deploy.py start
+```
+
+脚本会自动通过 `sudo -S` 填 103/106 的 sudo 密码，默认密码是单引号 `'`。如需覆盖：
+
+```bash
+M20_SUDO_PASSWORD="..." python3 src/M20_sdk_deploy/scripts/real_robot_deploy.py start
+# 或
+python3 src/M20_sdk_deploy/scripts/real_robot_deploy.py start --sudo-password "..."
+```
+
+默认执行顺序：
+1. 103：重启 `lio_perception.service`/`height_map_nav.service`，执行 LIO `start.sh`，开启 `/height_map`，进入 SDK mode (`/SDK_MODE command:200`)，启动 `sdk_deploy_tty` 里的 `rl_deploy`。
+2. 106：启动 `noisy_elevation_node.py`，发布 `/perception/noisy_elevation_array`。
+3. 本机：启动 `joy_tcp_sender.py --ip 10.21.41.1 --port 9999`。
+4. 本机：启动网页 3D 高度图可视化 `http://127.0.0.1:8765/`。
+
+只检查将要执行的命令，不真正启动：
+
+```bash
+python3 src/M20_sdk_deploy/scripts/real_robot_deploy.py start --dry-run
+```
+
+查看/停止：
+
+```bash
+python3 src/M20_sdk_deploy/scripts/real_robot_deploy.py status
+python3 src/M20_sdk_deploy/scripts/real_robot_deploy.py stop
+```
+
+`stop` 只停止本仓库启动的 `sdk_deploy_tty` 控制进程、106 的 `noisy_elevation_node.py`、本机 joystick/网页可视化，并调用 `/SDK_MODE command:0` 退出 SDK mode；不会清理 `/opt/robot/share/rl_deploy` 等官方常驻进程。

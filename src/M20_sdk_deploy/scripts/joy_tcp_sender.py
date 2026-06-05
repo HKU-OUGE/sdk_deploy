@@ -5,13 +5,14 @@ import struct
 import os
 import time
 import threading
+import argparse
 
 # ================= 配置区 =================
 # 【重要】请将这里替换为你 M20 机载电脑在局域网中的实际 IP 地址
-M20_IP = "10.21.31.103"
-TCP_PORT = 9999
-JOY_DEVICE = "/dev/input/js0"
-SEND_FREQ = 200.0 # 发送频率 200Hz
+M20_IP = os.environ.get("M20_IP", "10.21.31.103")
+TCP_PORT = int(os.environ.get("M20_TCP_PORT", "9999"))
+JOY_DEVICE = os.environ.get("JOY_DEVICE", "/dev/input/js0")
+SEND_FREQ = float(os.environ.get("JOY_SEND_FREQ", "200.0")) # 发送频率 200Hz
 # ==========================================
 
 # 全局状态缓存
@@ -51,7 +52,18 @@ def js_reader_thread():
         os.close(fd)
 
 def main():
-    global running
+    global running, M20_IP, TCP_PORT, JOY_DEVICE, SEND_FREQ
+
+    parser = argparse.ArgumentParser(description="Send local Linux joystick state to M20 rl_deploy over TCP.")
+    parser.add_argument("--ip", default=M20_IP)
+    parser.add_argument("--port", type=int, default=TCP_PORT)
+    parser.add_argument("--device", default=JOY_DEVICE)
+    parser.add_argument("--rate", type=float, default=SEND_FREQ)
+    args = parser.parse_args()
+    M20_IP = args.ip
+    TCP_PORT = args.port
+    JOY_DEVICE = args.device
+    SEND_FREQ = args.rate
 
     # 启动手柄读取后台线程
     threading.Thread(target=js_reader_thread, daemon=True).start()
