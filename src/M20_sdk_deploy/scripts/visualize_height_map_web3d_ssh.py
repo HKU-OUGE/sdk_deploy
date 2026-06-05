@@ -280,10 +280,17 @@ def build_ssh_command(args):
         + " ".join(sh_quote(x) for x in remote_args)
     )
     if args.sudo:
-        remote_cmd = (
-            f"printf {sh_quote(args.sudo_password + chr(10))} | "
-            f"sudo -S -p '' bash -lc {sh_quote(inner_cmd)}"
+        askpass_script = (
+            "askpass=$(mktemp) && "
+            "trap 'rm -f \"$askpass\"' EXIT && "
+            "cat > \"$askpass\" <<'ASKPASS'\n"
+            "#!/bin/sh\n"
+            f"printf %s {sh_quote(args.sudo_password)}\n"
+            "ASKPASS\n"
+            "chmod 700 \"$askpass\" && "
+            f"SUDO_ASKPASS=\"$askpass\" sudo -A -p '' bash -lc {sh_quote(inner_cmd)}"
         )
+        remote_cmd = askpass_script
     else:
         remote_cmd = inner_cmd
     cmd = ["ssh", "-o", "StrictHostKeyChecking=no", "-o", f"UserKnownHostsFile={args.known_hosts}"]

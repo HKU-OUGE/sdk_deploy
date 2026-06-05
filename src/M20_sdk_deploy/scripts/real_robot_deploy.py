@@ -13,6 +13,7 @@ services when requested by the start sequence.
 import argparse
 import base64
 import datetime as _dt
+import getpass
 import os
 import signal
 import shutil
@@ -62,11 +63,21 @@ def ssh_capture(host, remote_cmd, *, jump=None, timeout=None):
 def sudo_script(host, script, *, jump=None, timeout=None, check=True):
     encoded = base64.b64encode(script.encode("utf-8")).decode("ascii")
     runner = f"echo {encoded} | base64 -d | bash"
+    password = getattr(sudo_script, "password", "'")
+    askpass_script = (
+        "askpass=$(mktemp) && "
+        "trap 'rm -f \"$askpass\"' EXIT && "
+        "cat > \"$askpass\" <<'ASKPASS'\n"
+        "#!/bin/sh\n"
+        f"printf %s {shell_quote(password)}\n"
+        "ASKPASS\n"
+        "chmod 700 \"$askpass\" && "
+        f"SUDO_ASKPASS=\"$askpass\" sudo -A -p '' bash -lc {shell_quote(runner)}"
+    )
     ssh = ["ssh", "-o", "ConnectTimeout=8"]
     if jump:
         ssh += ["-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/tmp/known_hosts_106_via_103", "-J", jump]
-    password = getattr(sudo_script, "password", "'")
-    ssh += [host, f"printf {shell_quote(password + chr(10))} | sudo -S -p '' bash -lc {shell_quote(runner)}"]
+    ssh += [host, askpass_script]
     line_count = len([line for line in script.splitlines() if line.strip()])
     print("+ " + " ".join(ssh[:-1]) + f" <sudo remote script: {line_count} lines>", flush=True)
     return subprocess.run(ssh, text=True, check=check, timeout=timeout)
@@ -566,6 +577,7 @@ def parse_args():
     parser.add_argument("--host106", default="user@10.21.33.106")
     parser.add_argument("--jump", default="user@10.21.41.1")
     parser.add_argument("--sudo-password", default=os.environ.get("M20_SUDO_PASSWORD", "'"))
+    parser.add_argument("--ask-sudo-password", action="store_true", help="prompt once locally and reuse for 103/106 sudo")
     parser.add_argument("--robot-ip", default="10.21.41.1")
     parser.add_argument("--sdk-rate", type=int, default=200)
     parser.add_argument("--joy-port", type=int, default=9999)
@@ -594,6 +606,8 @@ def parse_args():
 
 def main():
     args = parse_args()
+    if args.ask_sudo_password:
+        args.sudo_password = getpass.getpass("103/106 sudo password: ")
     sudo_script.password = args.sudo_password
     if args.command == "start":
         start(args)

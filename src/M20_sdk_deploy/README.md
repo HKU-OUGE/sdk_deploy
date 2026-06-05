@@ -152,6 +152,14 @@ python3 src/M20_sdk_deploy/scripts/real_robot_deploy.py start --no-open-browser
 
 上面的命令在 bash/zsh 下都可直接复制。默认 sudo 密码是单引号 `'`，脚本内部会自动填写，不需要在命令行手写这个单引号。
 
+可选：在新电脑上先配置 103/106 免密 SSH，后续一键启动就不需要输入 SSH 登录密码：
+
+```bash
+ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519 -N "" -C "$(whoami)@$(hostname)" 2>/dev/null || true
+ssh-copy-id -i ~/.ssh/id_ed25519.pub user@10.21.41.1
+ssh-copy-id -i ~/.ssh/id_ed25519.pub -o ProxyJump=user@10.21.41.1 user@10.21.33.106
+```
+
 脚本会依次完成：
 
 1. 预检本机、103、106 的路径和关键文件。
@@ -180,6 +188,12 @@ python3 src/M20_sdk_deploy/scripts/real_robot_deploy.py stop
 ```bash
 M20_SUDO_PASSWORD="your_password" \
 python3 src/M20_sdk_deploy/scripts/real_robot_deploy.py start --no-open-browser
+```
+
+如果在另一台电脑上不想处理 shell 引号，也可以让脚本在本机只询问一次密码：
+
+```bash
+python3 src/M20_sdk_deploy/scripts/real_robot_deploy.py start --ask-sudo-password --no-open-browser
 ```
 
 不要写成 `--sudo-password '`；这个单引号会被 bash/zsh 当作 shell 引号解析。需要命令行参数时用双引号，例如 `--sudo-password "your_password"`。
