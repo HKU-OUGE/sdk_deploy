@@ -130,60 +130,129 @@ python3 src/M20_sdk_deploy/interface/robot/simulation/mujoco_simulation_ros2.py
 
 
 # Sim-to-Real
-This process is almost identical to simulation-simulation. You only need to add the step of connecting to Wi-Fi to transfer data, and then modify the compilation instructions. The default control mode is currently set to keyboard mode. We will be adding controller support in future updates. Stay tuned.
 
+先用手柄 OTA 将机器人硬件升级到 1.1.7 或更新版本。真机 WiFi 拓扑默认如下：
 
-Please first use the OTA upgrade function in the handle settings to upgrade the hardware to version 1.1.7.
+- 本机和手柄连接机器人 WiFi。
+- 103 控制机：`user@10.21.41.1`。
+- 106 感知机：`user@10.21.33.106`，从本机经 103 跳转访问。
+- 103/106 的 sudo 密码默认是单引号 `'`。
+- 103 上代码路径默认是 `/home/user/sdk_deploy_tty`。
+
+> 进入 SDK mode 后机器人会受控动作。启动前确认外部急停和软急停可用；用软急停退出后，如需再次测试，重新运行方案 A 即可。
+
+## 方案 A：本机一键启动
+
+在本机执行：
 
 ```bash
+cd /home/ouge/Software/sdk_deploy
+python3 src/M20_sdk_deploy/scripts/real_robot_deploy.py start --no-open-browser
+```
 
-# computer and gamepad should both connect to WiFi
-# WiFi: M20********
-# Passward: 12345678 (If wrong, contact technical support)
+脚本会依次完成：
 
-# scp to transfer files to quadruped (open a terminal on your local computer) password is ' (a single quote)
-scp -r ~/sdk_deploy/src user@10.21.31.103:~/sdk_deploy
+1. 预检本机、103、106 的路径和关键文件。
+2. 103：确认/启动 LIO，尝试开启 height map，进入 SDK mode (`/SDK_MODE command:200`)，启动本仓库 `rl_deploy`。
+3. 106：启动 `noisy_elevation_node.py`，发布 `/perception/noisy_elevation_array`。
+4. 等待 103 上 TCP 控制端口 `:9999` 监听。
+5. 本机：启动 `joy_tcp_sender.py`，把手柄数据发往 `10.21.41.1:9999`。
+6. 本机：启动高度图 3D 网页可视化 `http://127.0.0.1:8765/`。
 
-# ssh connect for remote development, 
-ssh user@10.21.31.103
-cd sdk_deploy
-source /opt/ros/foxy/setup.bash #source ROS2 env
-colcon build --packages-select m20_sdk_deploy --cmake-args -DBUILD_PLATFORM=arm
+常用命令：
 
+```bash
+# 只打印将要执行的命令，不启动真机控制
+python3 src/M20_sdk_deploy/scripts/real_robot_deploy.py start --dry-run --no-open-browser
 
-sudo su # Root
-source /opt/ros/foxy/setup.bash # source ROS2 env
+# 查看当前进程和端口
+python3 src/M20_sdk_deploy/scripts/real_robot_deploy.py status
+
+# 停止本仓库启动的控制/感知/手柄/网页，并退出 SDK mode
+python3 src/M20_sdk_deploy/scripts/real_robot_deploy.py stop
+```
+
+如果 sudo 密码不是默认单引号：
+
+```bash
+M20_SUDO_PASSWORD="your_password" \
+python3 src/M20_sdk_deploy/scripts/real_robot_deploy.py start --no-open-browser
+```
+
+如果 LIO 偶发没启动，脚本默认会在 sudo 下最多尝试 4 次，每次超时 12 秒。启动成功后看状态灯确认已进入 SDK mode，再用手柄切换模式和控制机器人。
+
+## 方案 B：手动启动/排查
+
+103 上进入 SDK mode：
+
+```bash
+ssh user@10.21.41.1
+sudo su
+source /opt/ros/foxy/setup.bash
 source /opt/robot/scripts/setup_ros2.sh
-ros2 service call /SDK_MODE drdds/srv/StdSrvInt32 "{command: 200}" # 200 is /JOINTS_DATA frequency. Recommended below 500 Hz. This value can only be factors of 1000.
+ros2 service call /SDK_MODE drdds/srv/StdSrvInt32 "{command: 200}"
+```
 
-# Start and enable LIO perception before running sensor policies.
-# The systemd service starts the lio_ddsnode process. The start.sh script sends
-# the runtime enable command (lio_command 1); it is still needed after reboot.
-systemctl status lio_perception.service height_map_nav.service --no-pager
+103 上启动/确认 LIO 和 height map：
+
+```bash
 systemctl restart lio_perception.service height_map_nav.service
+
+# LIO 有时需要重复运行 3-4 次；每次等待 10 秒以上即可。
 /opt/robot/share/lio_perception/scripts/start.sh
 
-# Optional read-only checks. Expected: /CLOUD_REGISTERED_BODY and /LIO_ODOM at ~10 Hz,
-# /IMU_DATA at high rate, and /JOINTS_DATA near the SDK_MODE frequency.
-ros2 topic list | grep -E "CLOUD_REGISTERED_BODY|LIO_ODOM|height_map|IMU_DATA|JOINTS_DATA"
-ros2 topic hz /CLOUD_REGISTERED_BODY
-ros2 topic hz /LIO_ODOM
+# height map enable 有时会阻塞；不影响先启动控制，可另开终端排查。
+timeout 10 ros2 service call /HEIGHT_MAP_ENABLE drdds/srv/StdSrvInt32 "{command: 1}" || true
 
-# Run
-source /opt/ros/foxy/setup.bash #source ROS2 env
+ros2 topic list | grep -E "CLOUD_REGISTERED_BODY|LIO_ODOM|height_map|IMU_DATA|JOINTS_DATA"
+```
+
+103 上启动本仓库控制端：
+
+```bash
+cd /home/user/sdk_deploy_tty
+source /opt/ros/foxy/setup.bash
 source /opt/robot/scripts/setup_ros2.sh
 source install/setup.bash
 ros2 run m20_sdk_deploy rl_deploy
+```
 
-# exit sdk mode:
+106 上启动 elevation 感知：
+
+```bash
+ssh -J user@10.21.41.1 user@10.21.33.106
+sudo su
+cd /home/user/sdk_deploy_tty
+source /opt/ros/foxy/setup.bash
+source /opt/robot/scripts/setup_ros2.sh
+python3 src/M20_sdk_deploy/scripts/noisy_elevation_node.py \
+  --ros-args \
+  -p lidar_topic:=/CLOUD_REGISTERED_BODY \
+  -p height_topic:=/height_map \
+  -p terrain_cache_scan:=true \
+  -p fk_height_scan:=false \
+  -p zero_height_scan:=false
+```
+
+本机启动手柄发送：
+
+```bash
+cd /home/ouge/Software/sdk_deploy
+python3 src/M20_sdk_deploy/scripts/joy_tcp_sender.py \
+  --ip 10.21.41.1 \
+  --port 9999 \
+  --device /dev/input/js0 \
+  --rate 200
+```
+
+退出 SDK mode：
+
+```bash
+ssh user@10.21.41.1
+sudo su
+source /opt/ros/foxy/setup.bash
+source /opt/robot/scripts/setup_ros2.sh
 ros2 service call /SDK_MODE drdds/srv/StdSrvInt32 "{command: 0}"
-
-# keyboard control
-Note: When the robot dog stands up, it may become stuck due to self-collision in the simulation. This is not a bug; please try again.
-- z： default position
-- c： rl control default position
-- wasd：forward/leftward/backward/rightward
-- qe：clockwise/counter clockwise
 ```
 
 # Unified Policy with Elevation (noisy_elevation)
@@ -253,42 +322,4 @@ sudo systemctl restart height_map_nav.service
 ```
 日志中应出现 `default_enable: 1` 和 `Data freq(Hz): Cloud=10 Odom=10 IMU=200` 左右。
 
-> 注：`/SDK_MODE ... 200` 进入 SDK 模式后机器人会受控动作，需配合外部急停按钮流程；详见硬件文档。
-
-## 本机一键真机部署脚本
-
-WiFi 拓扑下可以在本机依次启动 103/106/手柄/网页高度图可视化：
-
-```bash
-cd /home/ouge/Software/sdk_deploy
-python3 src/M20_sdk_deploy/scripts/real_robot_deploy.py start
-```
-
-脚本会自动通过 `sudo -S` 填 103/106 的 sudo 密码，默认密码是单引号 `'`。如需覆盖：
-
-```bash
-M20_SUDO_PASSWORD="..." python3 src/M20_sdk_deploy/scripts/real_robot_deploy.py start
-# 或
-python3 src/M20_sdk_deploy/scripts/real_robot_deploy.py start --sudo-password "..."
-```
-
-默认执行顺序：
-1. 103：重启 `lio_perception.service`/`height_map_nav.service`，执行 LIO `start.sh`，开启 `/height_map`，进入 SDK mode (`/SDK_MODE command:200`)，启动 `sdk_deploy_tty` 里的 `rl_deploy`。
-2. 106：启动 `noisy_elevation_node.py`，发布 `/perception/noisy_elevation_array`。
-3. 本机：启动 `joy_tcp_sender.py --ip 10.21.41.1 --port 9999`。
-4. 本机：启动网页 3D 高度图可视化 `http://127.0.0.1:8765/`。
-
-只检查将要执行的命令，不真正启动：
-
-```bash
-python3 src/M20_sdk_deploy/scripts/real_robot_deploy.py start --dry-run
-```
-
-查看/停止：
-
-```bash
-python3 src/M20_sdk_deploy/scripts/real_robot_deploy.py status
-python3 src/M20_sdk_deploy/scripts/real_robot_deploy.py stop
-```
-
-`stop` 只停止本仓库启动的 `sdk_deploy_tty` 控制进程、106 的 `noisy_elevation_node.py`、本机 joystick/网页可视化，并调用 `/SDK_MODE command:0` 退出 SDK mode；不会清理 `/opt/robot/share/rl_deploy` 等官方常驻进程。
+> 注：一键脚本的 `stop` 只停止本仓库启动的 `sdk_deploy_tty` 控制进程、106 的 `noisy_elevation_node.py`、本机 joystick/网页可视化，并调用 `/SDK_MODE command:0` 退出 SDK mode；不会清理 `/opt/robot/share/rl_deploy` 等官方常驻进程。

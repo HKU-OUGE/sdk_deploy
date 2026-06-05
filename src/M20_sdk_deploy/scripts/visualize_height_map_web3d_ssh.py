@@ -10,6 +10,7 @@ an HTML canvas and can be opened in any browser.
 import argparse
 import base64
 import json
+import os
 import signal
 import subprocess
 import sys
@@ -263,11 +264,19 @@ def build_ssh_command(args):
         "--rate", str(args.rate),
         "--stride", str(args.stride),
     ]
-    remote_cmd = (
+    inner_cmd = (
         "source /opt/ros/foxy/setup.bash && "
+        "source /opt/robot/scripts/setup_ros2.sh && "
         f"python3 -u -c \"import base64; exec(base64.b64decode('{encoded}').decode())\" "
         + " ".join(sh_quote(x) for x in remote_args)
     )
+    if args.sudo:
+        remote_cmd = (
+            f"printf {sh_quote(args.sudo_password + chr(10))} | "
+            f"sudo -S -p '' bash -lc {sh_quote(inner_cmd)}"
+        )
+    else:
+        remote_cmd = inner_cmd
     cmd = ["ssh", "-o", "StrictHostKeyChecking=no", "-o", f"UserKnownHostsFile={args.known_hosts}"]
     if args.jump:
         cmd += ["-J", args.jump]
@@ -345,6 +354,8 @@ def parse_args():
     parser.add_argument("--rate", type=float, default=3.0)
     parser.add_argument("--stride", type=int, default=2, help="downsample grid for smoother browser rendering")
     parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--sudo", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--sudo-password", default=os.environ.get("M20_SUDO_PASSWORD", "'"))
     parser.add_argument("--no-open", action="store_true")
     return parser.parse_args()
 

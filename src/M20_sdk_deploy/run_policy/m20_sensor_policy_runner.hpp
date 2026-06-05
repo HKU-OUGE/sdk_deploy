@@ -427,6 +427,12 @@ public:
                     curr_bwd_bins = bwd_scan_bins_;
                 }
             }
+            if (!scan_received_ && run_cnt_ % 200 == 0) {
+                std::cerr << "⚠️ [" << policy_name_
+                          << "] no /scan/multi_layer_features_array received; "
+                          << "legacy scan policy is using all-2.5m no-hit defaults."
+                          << std::endl;
+            }
 
             // === CSV 日志：仅记录 scan (elevation 已移除) ===
             if (data_log_file_.is_open() && !is_offline_test_) {
