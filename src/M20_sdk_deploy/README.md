@@ -163,12 +163,13 @@ ssh-copy-id -i ~/.ssh/id_ed25519.pub -o ProxyJump=user@10.21.41.1 user@10.21.33.
 脚本会依次完成：
 
 1. 预检本机、103、106 的路径和关键文件。
-2. 103：确认/启动 LIO，尝试开启 height map，进入 SDK mode (`/SDK_MODE command:200`)，启动本仓库 `rl_deploy`。
-3. 106：启动 `noisy_elevation_node.py`，发布 `/perception/noisy_elevation_array`。
-4. 106：等待 `/height_map` 首帧，确认网页可视化不会打开空数据页面。
-5. 等待 103 上 TCP 控制端口 `:9999` 监听。
-6. 本机：启动 `joy_tcp_sender.py`，把手柄数据发往 `10.21.41.1:9999`。
-7. 本机：启动高度图 3D 网页可视化 `http://127.0.0.1:8765/`。
+2. 103：确认/启动 LIO，尝试开启 height map，进入 SDK mode (`/SDK_MODE command:200`)。
+3. 103：启动 `lidar_to_scan_cpp`，发布旧平台/爬行策略需要的 `/scan/multi_layer_features_array`（992 维），随后启动本仓库 `rl_deploy`。
+4. 106：启动 `noisy_elevation_node.py`，发布 `/perception/noisy_elevation_array`。
+5. 106：等待 `/height_map` 首帧，确认网页可视化不会打开空数据页面。
+6. 等待 103 上 TCP 控制端口 `:9999` 监听。
+7. 本机：启动 `joy_tcp_sender.py`，把手柄数据发往 `10.21.41.1:9999`。
+8. 本机：启动高度图 3D 网页可视化 `http://127.0.0.1:8765/`。
 
 常用命令：
 

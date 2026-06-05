@@ -117,6 +117,7 @@ set -e
 test -d {REMOTE_ROOT}
 test -f {REMOTE_ROOT}/install/setup.bash
 test -x {REMOTE_ROOT}/install/m20_sdk_deploy/lib/m20_sdk_deploy/rl_deploy
+test -x {REMOTE_ROOT}/install/m20_sdk_deploy/lib/m20_sdk_deploy/lidar_to_scan_cpp
 test -f /opt/ros/foxy/setup.bash
 test -f /opt/robot/scripts/setup_ros2.sh
 command -v ros2 >/dev/null || true
@@ -244,6 +245,57 @@ PY
   rm -f "$tmp"
   return "$rc"
 }}
+scan_frame_available() {{
+  tmp=$(mktemp)
+  set +e
+  run_with_timeout 8.0 python3 - <<'PY' > "$tmp" 2>&1
+import math
+import time
+
+import rclpy
+from rclpy.node import Node
+from std_msgs.msg import Float32MultiArray
+
+
+class Probe(Node):
+    def __init__(self):
+        super().__init__("legacy_scan_probe")
+        self.frame = None
+        self.create_subscription(Float32MultiArray, "/scan/multi_layer_features_array", self.cb, 10)
+
+    def cb(self, msg):
+        data = list(msg.data)
+        if len(data) == 992:
+            finite = [v for v in data if math.isfinite(v)]
+            if finite:
+                self.frame = (len(data), min(finite), max(finite))
+
+
+rclpy.init()
+node = Probe()
+deadline = time.time() + 6.0
+while time.time() < deadline and node.frame is None:
+    rclpy.spin_once(node, timeout_sec=0.2)
+if node.frame is None:
+    print("SCAN_FRAME missing")
+    node.destroy_node()
+    rclpy.shutdown()
+    raise SystemExit(2)
+dim, v_min, v_max = node.frame
+print(f"SCAN_FRAME ok dim={{dim}} min={{v_min:.3f}} max={{v_max:.3f}}")
+node.destroy_node()
+rclpy.shutdown()
+PY
+  rc=$?
+  set -e
+  cat "$tmp"
+  if grep -q 'SCAN_FRAME ok' "$tmp"; then
+    rm -f "$tmp"
+    return 0
+  fi
+  rm -f "$tmp"
+  return "$rc"
+}}
 start_lio_with_retries() {{
   attempt=1
   ok=1
@@ -289,6 +341,18 @@ cd {REMOTE_ROOT}
 source /opt/ros/foxy/setup.bash
 source /opt/robot/scripts/setup_ros2.sh
 source install/setup.bash
+if [ "{str(args.legacy_scan).lower()}" = "true" ]; then
+  scan_log={REMOTE_LOG_DIR}/{tag}/lidar_to_scan_103.log
+  pkill -TERM -f {REMOTE_ROOT}/install/m20_sdk_deploy/lib/m20_sdk_deploy/lidar_to_scan_cpp || true
+  pkill -TERM -f 'ros2 run m20_sdk_deploy lidar_to_scan_cpp' || true
+  nohup ros2 run m20_sdk_deploy lidar_to_scan_cpp --ros-args -p lidar_topic:={args.scan_lidar_topic} > "$scan_log" 2>&1 < /dev/null &
+  echo "lidar_to_scan log=$scan_log"
+  sleep 1
+  pgrep -af "{REMOTE_ROOT}/install/m20_sdk_deploy/lib/m20_sdk_deploy/lidar_to_scan_cpp|ros2 run m20_sdk_deploy lidar_to_scan_cpp" || true
+  if ! scan_frame_available; then
+    echo "[warn] /scan/multi_layer_features_array is missing; platform/crawl policies will see no-hit scan values"
+  fi
+fi
 log={REMOTE_LOG_DIR}/{tag}/rl_deploy_103.log
 pkill -TERM -f {REMOTE_ROOT}/install/m20_sdk_deploy/lib/m20_sdk_deploy/rl_deploy || true
 nohup ros2 run m20_sdk_deploy rl_deploy > "$log" 2>&1 < /dev/null &
@@ -485,7 +549,7 @@ def status(args):
     print("== 103 ==")
     out103 = ssh_capture(
         args.host103,
-        "pgrep -af '[s]dk_deploy_tty|[m]20_sdk_deploy|[r]l_deploy|[l]io_ddsnode|[r]slidar' || true; "
+        "pgrep -af '[s]dk_deploy_tty|[m]20_sdk_deploy|[r]l_deploy|[l]idar_to_scan|[l]io_ddsnode|[r]slidar' || true; "
         "ss -ltnp 2>/dev/null | grep ':9999' || true",
         timeout=10,
     )
@@ -535,6 +599,8 @@ def stop(args):
 set +e
 pkill -TERM -f {REMOTE_ROOT}/install/m20_sdk_deploy/lib/m20_sdk_deploy/rl_deploy
 pkill -TERM -f 'ros2 run m20_sdk_deploy rl_deploy'
+pkill -TERM -f {REMOTE_ROOT}/install/m20_sdk_deploy/lib/m20_sdk_deploy/lidar_to_scan_cpp
+pkill -TERM -f 'ros2 run m20_sdk_deploy lidar_to_scan_cpp'
 sleep 1
 source /opt/ros/foxy/setup.bash
 source /opt/robot/scripts/setup_ros2.sh 2>/dev/null || true
@@ -585,6 +651,8 @@ def parse_args():
     parser.add_argument("--joy-rate", type=float, default=200.0)
     parser.add_argument("--cache-ttl-sec", type=float, default=8.0)
     parser.add_argument("--cache-radius-m", type=float, default=3.0)
+    parser.add_argument("--legacy-scan", action=argparse.BooleanOptionalAction, default=True, help="start 103 lidar_to_scan_cpp for legacy 992-dim platform/crawl policies")
+    parser.add_argument("--scan-lidar-topic", default="/CLOUD_REGISTERED_BODY")
     parser.add_argument("--web-visualizer", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--visual-rate", type=float, default=3.0)
     parser.add_argument("--visual-stride", type=int, default=2)
