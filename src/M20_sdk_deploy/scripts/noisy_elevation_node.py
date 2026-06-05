@@ -29,11 +29,13 @@ height_scan(187): 17×11 yaw 网格 @0.1m (x∈[-0.8,0.8], y∈[-0.5,0.5]),
 import math
 import threading
 import time
+from collections import defaultdict
 
 import numpy as np
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import PointCloud2
+from sensor_msgs.msg import Imu
 from sensor_msgs_py import point_cloud2
 from std_msgs.msg import Float32MultiArray
 
@@ -42,6 +44,12 @@ try:
     _HAS_ODOM = True
 except Exception:
     _HAS_ODOM = False
+
+try:
+    from drdds.msg import JointsData
+    _HAS_JOINTS = True
+except Exception:
+    _HAS_JOINTS = False
 
 # ---- forward/backward scan 几何 (multi_pitch_arc) ----
 NUM_PITCH = 12
@@ -69,6 +77,18 @@ NOISY_ELEV_DIM = HEIGHT_DIM + NUM_PER_DIR * 2   # 187 + 252 + 252 = 691
 
 FWD_OFFSET = np.array([0.32028, 0.0, -0.013], dtype=np.float32)
 BWD_OFFSET = np.array([-0.32028, 0.0, -0.013], dtype=np.float32)
+
+# M20Interface raw DDS joint -> control joint conversion.
+_POS_OFFSET_DEG = np.array(
+    [-25, -131, 160, 0, 25, -131, 160, 0, -25, 131, -160, 0, 25, 131, -160, 0],
+    dtype=np.float32,
+)
+_JOINT_DIR = np.array([1, 1, -1, 1, 1, -1, 1, -1, -1, 1, -1, 1, -1, -1, 1, -1], dtype=np.float32)
+_POS_OFFSET = np.deg2rad(_POS_OFFSET_DEG).astype(np.float32)
+_BASE_X = np.array([0.31, 0.31, -0.31, -0.31], dtype=np.float32)
+_BASE_Y = np.array([0.17, -0.17, 0.17, -0.17], dtype=np.float32)
+_HIPY_IDX = [1, 5, 9, 13]
+_KNEE_IDX = [2, 6, 10, 14]
 
 
 def _bin_one_direction(pts, boresight_sign):
@@ -130,6 +150,24 @@ def _cloud_to_xyz(msg):
     return a
 
 
+def _quat_to_rot(q):
+    x, y, z, w = float(q.x), float(q.y), float(q.z), float(q.w)
+    n = math.sqrt(x * x + y * y + z * z + w * w)
+    if n < 1e-9:
+        return np.eye(3, dtype=np.float32)
+    x, y, z, w = x / n, y / n, z / n, w / n
+    return np.array([
+        [1 - 2 * y * y - 2 * z * z, 2 * x * y - 2 * z * w, 2 * x * z + 2 * y * w],
+        [2 * x * y + 2 * z * w, 1 - 2 * x * x - 2 * z * z, 2 * y * z - 2 * x * w],
+        [2 * x * z - 2 * y * w, 2 * y * z + 2 * x * w, 1 - 2 * x * x - 2 * y * y],
+    ], dtype=np.float32)
+
+
+def _quat_to_yaw(q):
+    x, y, z, w = float(q.x), float(q.y), float(q.z), float(q.w)
+    return math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
+
+
 class NoisyElevationNode(Node):
     def __init__(self):
         super().__init__('noisy_elevation_node')
@@ -137,8 +175,22 @@ class NoisyElevationNode(Node):
         # 真机: /height_map (height_map_nav, 81×81@0.1m base_link, 需 /HEIGHT_MAP_ENABLE command:1 开启)
         # sim:  发同名 /height_map 即可 (Phase4)。注意 /HEIGHT_POINTS 是死占位, 勿用
         self.declare_parameter('height_topic', '/height_map')
+        self.declare_parameter('zero_height_scan', False)
+        self.declare_parameter('fk_height_scan', False)
+        self.declare_parameter('terrain_cache_scan', False)
+        self.declare_parameter('cache_resolution', 0.1)
+        self.declare_parameter('cache_ttl_sec', 8.0)
+        self.declare_parameter('cache_radius_m', 3.0)
+        self.declare_parameter('cache_min_points', 3)
         lt = self.get_parameter('lidar_topic').value
         ht = self.get_parameter('height_topic').value
+        self.zero_height_scan = bool(self.get_parameter('zero_height_scan').value)
+        self.fk_height_scan = bool(self.get_parameter('fk_height_scan').value)
+        self.terrain_cache_scan = bool(self.get_parameter('terrain_cache_scan').value)
+        self.cache_res = float(self.get_parameter('cache_resolution').value)
+        self.cache_ttl = float(self.get_parameter('cache_ttl_sec').value)
+        self.cache_radius = float(self.get_parameter('cache_radius_m').value)
+        self.cache_min_points = int(self.get_parameter('cache_min_points').value)
 
         self.sub = self.create_subscription(PointCloud2, lt, self.pc_callback, 10)
         self.height_sub = self.create_subscription(PointCloud2, ht, self.height_callback, 10)
@@ -147,6 +199,22 @@ class NoisyElevationNode(Node):
         self.height_lock = threading.Lock()
         self.height_xyz = None          # (N,3) base 系高程网格
         self.height_recv = 0
+        self.joint_lock = threading.Lock()
+        self.last_joint_q = None
+        self.joint_recv = 0
+        self.imu_rot = np.eye(3, dtype=np.float32)
+        self.imu_recv = 0
+        self.pose_lock = threading.Lock()
+        self.odom_x = 0.0
+        self.odom_y = 0.0
+        self.odom_yaw = 0.0
+        self.odom_pose_recv = 0
+        self.cache_lock = threading.Lock()
+        self.terrain_cache = {}  # (ix, iy) -> [height_world, confidence, timestamp]
+        self.cache_update_cells = 0
+        self.cache_hits = 0
+        self.cache_misses = 0
+        self.last_base_height = None
 
         # /LIO_ODOM 仅用于记录/校验 z (height_scan 不依赖绝对 z)
         self.last_odom_z = None
@@ -154,6 +222,9 @@ class NoisyElevationNode(Node):
         self.odom_z_max = None
         if _HAS_ODOM:
             self.odom_sub = self.create_subscription(Odometry, '/LIO_ODOM', self.odom_callback, 10)
+        if _HAS_JOINTS:
+            self.joint_sub = self.create_subscription(JointsData, '/JOINTS_DATA', self.joint_callback, 10)
+            self.imu_sub = self.create_subscription(Imu, '/IMU', self.imu_callback, 10)
 
         self.recv_count = 0
         self.pub_count = 0
@@ -161,19 +232,211 @@ class NoisyElevationNode(Node):
         self.create_timer(1.0, self.log_diagnostics)
         self.get_logger().info(
             f"✅ noisy_elevation: lidar={lt} height={ht} | "
-            f"height({HEIGHT_DIM}) + fwd({NUM_PER_DIR}) + bwd({NUM_PER_DIR}) = {NOISY_ELEV_DIM}")
+            f"height({HEIGHT_DIM}) + fwd({NUM_PER_DIR}) + bwd({NUM_PER_DIR}) = {NOISY_ELEV_DIM} | "
+            f"zero_height_scan={self.zero_height_scan} fk_height_scan={self.fk_height_scan} "
+            f"terrain_cache_scan={self.terrain_cache_scan}")
 
     def odom_callback(self, msg):
         z = float(msg.pose.pose.position.z)
         self.last_odom_z = z
         self.odom_z_min = z if self.odom_z_min is None else min(self.odom_z_min, z)
         self.odom_z_max = z if self.odom_z_max is None else max(self.odom_z_max, z)
+        with self.pose_lock:
+            self.odom_x = float(msg.pose.pose.position.x)
+            self.odom_y = float(msg.pose.pose.position.y)
+            self.odom_yaw = _quat_to_yaw(msg.pose.pose.orientation)
+            self.odom_pose_recv += 1
 
     def height_callback(self, msg):
         a = _cloud_to_xyz(msg)
         with self.height_lock:
             self.height_xyz = a
             self.height_recv += 1
+
+    def imu_callback(self, msg):
+        self.imu_rot = _quat_to_rot(msg.orientation)
+        self.imu_recv += 1
+
+    def joint_callback(self, msg):
+        raw = np.array([j.position for j in msg.data.joints_data], dtype=np.float32)
+        if raw.size != 16:
+            return
+        q = raw * _JOINT_DIR + _POS_OFFSET
+        with self.joint_lock:
+            self.last_joint_q = q
+            self.joint_recv += 1
+
+    def compute_fk_base_height(self):
+        with self.joint_lock:
+            q = None if self.last_joint_q is None else self.last_joint_q.copy()
+        if q is None:
+            return None
+
+        heights = []
+        R = self.imu_rot
+        for i in range(4):
+            q_hipy = float(q[_HIPY_IDX[i]])
+            q_knee = float(q[_KNEE_IDX[i]])
+            z_drop = 0.25 * math.cos(q_hipy) + 0.25 * math.cos(q_hipy + q_knee) + 0.086
+            x_shift = 0.25 * math.sin(q_hipy) + 0.25 * math.sin(q_hipy + q_knee)
+            foot_local = np.array([_BASE_X[i] + x_shift, _BASE_Y[i], -z_drop], dtype=np.float32)
+            foot_world = R @ foot_local
+            heights.append(-float(foot_world[2]))
+        base_height = float(np.mean(heights))
+        self.last_base_height = base_height
+        return base_height
+
+    def compute_fk_height_scan(self):
+        base_height = self.compute_fk_base_height()
+        if base_height is None:
+            return np.zeros(HEIGHT_DIM, dtype=np.float32)
+        height_value = np.clip(base_height - HEIGHT_OFFSET, -1.0, 1.0)
+        return np.full(HEIGHT_DIM, height_value, dtype=np.float32)
+
+    def _pose2d(self):
+        with self.pose_lock:
+            return self.odom_x, self.odom_y, self.odom_yaw
+
+    def update_terrain_cache(self, pts, base_height):
+        if pts.size == 0 or base_height is None:
+            return
+
+        x, y, z = pts[:, 0], pts[:, 1], pts[:, 2]
+        finite = np.isfinite(x) & np.isfinite(y) & np.isfinite(z)
+        # Keep terrain-sized returns in a local region. This rejects many walls/high obstacles
+        # while keeping steps, platforms and ramps that are observable as horizontal patches.
+        local = (
+            finite
+            & (x > -1.2) & (x < 2.5)
+            & (np.abs(y) < 1.6)
+            & (z > -base_height - 0.35)
+            & (z < 0.45)
+        )
+        if not np.any(local):
+            return
+
+        x, y, z = x[local], y[local], z[local]
+        odom_x, odom_y, yaw = self._pose2d()
+        c, s = math.cos(yaw), math.sin(yaw)
+        wx = odom_x + c * x - s * y
+        wy = odom_y + s * x + c * y
+        wh = z + base_height
+
+        buckets = defaultdict(list)
+        inv_res = 1.0 / max(self.cache_res, 1e-6)
+        for xi, yi, hi in zip(wx, wy, wh):
+            if not math.isfinite(float(hi)) or hi < -0.35 or hi > 0.75:
+                continue
+            key = (int(round(float(xi) * inv_res)), int(round(float(yi) * inv_res)))
+            buckets[key].append(float(hi))
+
+        candidates = {}
+        for key, vals in buckets.items():
+            if len(vals) < self.cache_min_points:
+                continue
+            vals.sort()
+            # Low percentile favors walkable lower surfaces over vertical clutter in the same cell.
+            h = vals[int(0.2 * (len(vals) - 1))]
+            spread = vals[-1] - vals[0]
+            if spread > 0.45:
+                continue
+            candidates[key] = h
+
+        accepted = {}
+        for key, h in candidates.items():
+            if h <= 0.07:
+                accepted[key] = h
+                continue
+            ix, iy = key
+            x_support = False
+            y_support = False
+            for dx in (-1, 0, 1):
+                for dy in (-1, 0, 1):
+                    if dx == 0 and dy == 0:
+                        continue
+                    nh = candidates.get((ix + dx, iy + dy))
+                    if nh is None or abs(nh - h) > 0.12:
+                        continue
+                    if dx != 0:
+                        x_support = True
+                    if dy != 0:
+                        y_support = True
+            if x_support and y_support:
+                accepted[key] = h
+
+        now = time.time()
+        with self.cache_lock:
+            for key, h in accepted.items():
+                old = self.terrain_cache.get(key)
+                if old is None:
+                    self.terrain_cache[key] = [h, 1.0, now]
+                else:
+                    old_h, conf, _ = old
+                    # Faster correction for real height changes, slower smoothing for small jitter.
+                    alpha = 0.65 if abs(h - old_h) < 0.08 else 0.25
+                    self.terrain_cache[key] = [alpha * old_h + (1.0 - alpha) * h, min(conf + 1.0, 10.0), now]
+
+            max_cell_dist = int(math.ceil(self.cache_radius * inv_res))
+            cx = int(round(odom_x * inv_res))
+            cy = int(round(odom_y * inv_res))
+            stale = [
+                key for key, (_, _, ts) in self.terrain_cache.items()
+                if now - ts > self.cache_ttl
+                or abs(key[0] - cx) > max_cell_dist
+                or abs(key[1] - cy) > max_cell_dist
+            ]
+            for key in stale:
+                self.terrain_cache.pop(key, None)
+            self.cache_update_cells = len(accepted)
+
+    def compute_cached_height_scan(self, pts):
+        base_height = self.compute_fk_base_height()
+        if base_height is None:
+            return np.zeros(HEIGHT_DIM, dtype=np.float32)
+        self.update_terrain_cache(pts, base_height)
+
+        odom_x, odom_y, yaw = self._pose2d()
+        c, s = math.cos(yaw), math.sin(yaw)
+        now = time.time()
+        inv_res = 1.0 / max(self.cache_res, 1e-6)
+        out = np.empty(HEIGHT_DIM, dtype=np.float32)
+        hits = 0
+        misses = 0
+
+        with self.cache_lock:
+            cache = dict(self.terrain_cache)
+
+        for i, (qx, qy) in enumerate(zip(_TX, _TY)):
+            wx = odom_x + c * float(qx) - s * float(qy)
+            wy = odom_y + s * float(qx) + c * float(qy)
+            ix = int(round(wx * inv_res))
+            iy = int(round(wy * inv_res))
+            best_h = None
+            best_score = 1e9
+            for dx in (-1, 0, 1):
+                for dy in (-1, 0, 1):
+                    entry = cache.get((ix + dx, iy + dy))
+                    if entry is None:
+                        continue
+                    h, conf, ts = entry
+                    age = now - ts
+                    if age > self.cache_ttl:
+                        continue
+                    score = dx * dx + dy * dy + 0.05 * age - 0.01 * conf
+                    if score < best_score:
+                        best_score = score
+                        best_h = h
+            if best_h is None:
+                # Unknown/occluded cells fall back to the FK flat-ground baseline.
+                best_h = 0.0
+                misses += 1
+            else:
+                hits += 1
+            out[i] = np.clip(base_height - best_h - HEIGHT_OFFSET, -1.0, 1.0)
+
+        self.cache_hits = hits
+        self.cache_misses = misses
+        return out
 
     def compute_height_scan(self):
         """187 维 height_scan = clamp(-terrain_z_base - 0.5, -1, 1), 取自 base 系高程网格。"""
@@ -215,7 +478,14 @@ class NoisyElevationNode(Node):
         if len(points) == 0:
             return
 
-        height = self.compute_height_scan()                     # 187
+        if self.zero_height_scan:
+            height = np.zeros(HEIGHT_DIM, dtype=np.float32)     # 临时排查: 隔离 height_map 漂移
+        elif self.terrain_cache_scan:
+            height = self.compute_cached_height_scan(points)    # LiDAR rolling grid + FK/IMU fallback
+        elif self.fk_height_scan:
+            height = self.compute_fk_height_scan()              # 临时真机: FK+IMU 稳定高度
+        else:
+            height = self.compute_height_scan()                 # 187
         fwd = _bin_one_direction(points, +1)                    # 252
         bwd = _bin_one_direction(points, -1)                    # 252
 
@@ -233,6 +503,12 @@ class NoisyElevationNode(Node):
         if self.recv_count > 0:
             avg = sum(self.process_times) / len(self.process_times) if self.process_times else 0.0
             hinfo = "height:无网格" if self.height_xyz is None else f"height:{self.height_recv}帧"
+            if self.fk_height_scan or self.terrain_cache_scan:
+                hinfo += f" fk_joint:{self.joint_recv} imu:{self.imu_recv}"
+            if self.terrain_cache_scan:
+                hinfo += (f" cache:{len(self.terrain_cache)} upd:{self.cache_update_cells} "
+                          f"hit:{self.cache_hits} miss:{self.cache_misses} "
+                          f"base_h:{self.last_base_height if self.last_base_height is not None else float('nan'):.3f}")
             zinfo = ""
             if self.last_odom_z is not None:
                 zinfo = (f" | LIO_ODOM z last={self.last_odom_z:.4f} "
