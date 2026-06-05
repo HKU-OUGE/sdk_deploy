@@ -245,11 +245,20 @@ class Shared:
         self.cond = threading.Condition()
         self.frame = None
         self.seq = 0
+        self.first_logged = False
 
     def set(self, frame):
         with self.cond:
             self.frame = frame
             self.seq += 1
+            if not self.first_logged:
+                self.first_logged = True
+                print(
+                    "height-map first frame: "
+                    f"{frame.get('source_height')}x{frame.get('source_width')} "
+                    f"z={frame.get('z_min'):.3f}..{frame.get('z_max'):.3f}",
+                    flush=True,
+                )
             self.cond.notify_all()
 
 

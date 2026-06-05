@@ -150,14 +150,17 @@ cd /home/ouge/Software/sdk_deploy
 python3 src/M20_sdk_deploy/scripts/real_robot_deploy.py start --no-open-browser
 ```
 
+上面的命令在 bash/zsh 下都可直接复制。默认 sudo 密码是单引号 `'`，脚本内部会自动填写，不需要在命令行手写这个单引号。
+
 脚本会依次完成：
 
 1. 预检本机、103、106 的路径和关键文件。
 2. 103：确认/启动 LIO，尝试开启 height map，进入 SDK mode (`/SDK_MODE command:200`)，启动本仓库 `rl_deploy`。
 3. 106：启动 `noisy_elevation_node.py`，发布 `/perception/noisy_elevation_array`。
-4. 等待 103 上 TCP 控制端口 `:9999` 监听。
-5. 本机：启动 `joy_tcp_sender.py`，把手柄数据发往 `10.21.41.1:9999`。
-6. 本机：启动高度图 3D 网页可视化 `http://127.0.0.1:8765/`。
+4. 106：等待 `/height_map` 首帧，确认网页可视化不会打开空数据页面。
+5. 等待 103 上 TCP 控制端口 `:9999` 监听。
+6. 本机：启动 `joy_tcp_sender.py`，把手柄数据发往 `10.21.41.1:9999`。
+7. 本机：启动高度图 3D 网页可视化 `http://127.0.0.1:8765/`。
 
 常用命令：
 
@@ -179,7 +182,9 @@ M20_SUDO_PASSWORD="your_password" \
 python3 src/M20_sdk_deploy/scripts/real_robot_deploy.py start --no-open-browser
 ```
 
-如果 LIO 偶发没启动，脚本默认会在 sudo 下最多尝试 4 次，每次超时 12 秒。启动成功后看状态灯确认已进入 SDK mode，再用手柄切换模式和控制机器人。
+不要写成 `--sudo-password '`；这个单引号会被 bash/zsh 当作 shell 引号解析。需要命令行参数时用双引号，例如 `--sudo-password "your_password"`。
+
+如果 LIO 偶发没启动，脚本默认会在 sudo 下最多尝试 4 次，每次超时 12 秒；每次成功后会检查 103 是否收到 `/CLOUD_REGISTERED_BODY`，有数据就停止重试。启动成功后看状态灯确认已进入 SDK mode，再用手柄切换模式和控制机器人。
 
 ## 方案 B：手动启动/排查
 

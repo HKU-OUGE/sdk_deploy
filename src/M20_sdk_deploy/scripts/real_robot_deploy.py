@@ -190,6 +190,49 @@ sdk_mode_call() {{
   rm -f "$tmp"
   return "$rc"
 }}
+cloud_frame_available() {{
+  tmp=$(mktemp)
+  set +e
+  run_with_timeout 6.0 python3 - <<'PY' > "$tmp" 2>&1
+import time
+
+import rclpy
+from rclpy.node import Node
+from sensor_msgs.msg import PointCloud2
+
+
+class Probe(Node):
+    def __init__(self):
+        super().__init__("cloud_registered_probe")
+        self.ok = False
+        self.create_subscription(PointCloud2, "/CLOUD_REGISTERED_BODY", self.cb, 10)
+
+    def cb(self, msg):
+        if msg.width * msg.height > 0:
+            self.ok = True
+
+
+rclpy.init()
+node = Probe()
+deadline = time.time() + 4.0
+while time.time() < deadline and not node.ok:
+    rclpy.spin_once(node, timeout_sec=0.2)
+ok = node.ok
+node.destroy_node()
+rclpy.shutdown()
+print("CLOUD_FRAME ok" if ok else "CLOUD_FRAME missing")
+raise SystemExit(0 if ok else 2)
+PY
+  rc=$?
+  set -e
+  cat "$tmp"
+  if grep -q 'CLOUD_FRAME ok' "$tmp"; then
+    rm -f "$tmp"
+    return 0
+  fi
+  rm -f "$tmp"
+  return "$rc"
+}}
 start_lio_with_retries() {{
   attempt=1
   ok=1
@@ -201,11 +244,16 @@ start_lio_with_retries() {{
     rc=$?
     set -e
     cat "$tmp"
-    if [ "$rc" -eq 0 ] || grep -q '调用成功' "$tmp" || grep -q 'res: 1' "$tmp"; then
+    if grep -q '调用成功' "$tmp" || grep -q 'res: 1' "$tmp"; then
       echo "[103] LIO start.sh returned success on attempt $attempt"
       ok=0
+      if cloud_frame_available; then
+        rm -f "$tmp"
+        return 0
+      fi
+      echo "[warn] LIO command returned success but /CLOUD_REGISTERED_BODY has no frame yet"
     else
-      echo "[warn] LIO start.sh failed or timed out on attempt $attempt"
+      echo "[warn] LIO start.sh did not report success on attempt $attempt (rc=$rc)"
     fi
     rm -f "$tmp"
     sleep 2
@@ -242,6 +290,91 @@ ss -ltnp 2>/dev/null | grep ':9999' || true
         print("[dry-run] 103 script:\n" + script)
         return
     sudo_script(args.host103, script, timeout=args.start_103_timeout_sec)
+
+
+def ensure_103_lio_data(args):
+    script = f"""
+set -e
+source /opt/ros/foxy/setup.bash
+source /opt/robot/scripts/setup_ros2.sh
+for i in $(seq 1 {args.lio_recover_attempts}); do
+  echo "[103] extra LIO enable attempt $i/{args.lio_recover_attempts}"
+  set +e
+  /opt/robot/share/lio_perception/scripts/start.sh
+  rc=$?
+  set -e
+  echo "[103] extra LIO enable rc=$rc"
+  sleep 2
+done
+"""
+    sudo_script(args.host103, script, timeout=max(30, args.lio_recover_attempts * 18), check=False)
+
+
+def wait_for_106_height_map_frame(args):
+    if args.dry_run:
+        print("[dry-run] skip waiting for 106 height-map frame")
+        return
+    check_script = r"""
+set -e
+source /opt/ros/foxy/setup.bash
+source /opt/robot/scripts/setup_ros2.sh 2>/dev/null || true
+python3 - <<'PY'
+import math
+import time
+
+import numpy as np
+import rclpy
+from rclpy.node import Node
+from sensor_msgs.msg import PointCloud2
+from sensor_msgs_py import point_cloud2
+
+
+class Probe(Node):
+    def __init__(self):
+        super().__init__("height_map_probe")
+        self.frame = None
+        self.create_subscription(PointCloud2, "/height_map", self.cb, 10)
+
+    def cb(self, msg):
+        pts = list(point_cloud2.read_points(msg, field_names=("z",), skip_nans=False))
+        if not pts:
+            return
+        arr = np.asarray(pts)
+        if arr.dtype.names is not None:
+            z = arr["z"].astype(np.float32)
+        else:
+            z = arr.astype(np.float32).reshape(-1)
+        finite = np.isfinite(z)
+        if finite.any():
+            self.frame = (int(finite.sum()), float(np.nanmin(z)), float(np.nanmax(z)))
+
+
+rclpy.init()
+node = Probe()
+deadline = time.time() + 8.0
+while time.time() < deadline and node.frame is None:
+    rclpy.spin_once(node, timeout_sec=0.2)
+if node.frame is None:
+    print("HEIGHT_MAP_FRAME missing")
+    node.destroy_node()
+    rclpy.shutdown()
+    raise SystemExit(2)
+finite, z_min, z_max = node.frame
+print(f"HEIGHT_MAP_FRAME ok finite={finite} z_min={z_min:.3f} z_max={z_max:.3f}")
+node.destroy_node()
+rclpy.shutdown()
+PY
+"""
+    for attempt in range(1, args.height_frame_attempts + 1):
+        print(f"[106] wait for /height_map frame attempt {attempt}/{args.height_frame_attempts}", flush=True)
+        out = sudo_script(args.host106, check_script, jump=args.jump, timeout=20, check=False)
+        if out.returncode == 0:
+            print("[106] /height_map frame is available", flush=True)
+            return
+        if attempt < args.height_frame_attempts:
+            print("[warn] 106 did not receive /height_map; re-enabling LIO on 103", flush=True)
+            ensure_103_lio_data(args)
+    raise RuntimeError("106 did not receive /height_map frames; web visualizer would be blank")
 
 
 def wait_for_103_control_port(args):
@@ -405,14 +538,19 @@ def start(args):
     print(f"[deploy] tag={tag}")
     if not args.skip_preflight:
         preflight(args)
-    print("[1/5] 103: LIO/height map, SDK mode, rl_deploy")
+    total_steps = 6 if args.web_visualizer else 5
+    print(f"[1/{total_steps}] 103: LIO/height map, SDK mode, rl_deploy")
     start_103(args, tag)
-    print("[2/5] 106: noisy_elevation_node")
+    print(f"[2/{total_steps}] 106: noisy_elevation_node")
     start_106(args, tag)
-    print("[3/5] wait for 103 TCP control port")
+    if args.web_visualizer:
+        print(f"[3/{total_steps}] wait for 106 height-map frame")
+        wait_for_106_height_map_frame(args)
+    control_step = 4 if args.web_visualizer else 3
+    print(f"[{control_step}/{total_steps}] wait for 103 TCP control port")
     wait_for_103_control_port(args)
-    print("[4/5] local: joystick sender")
-    print("[5/5] local: web height-map visualizer" if args.web_visualizer else "[5/5] local: web visualizer disabled")
+    print(f"[{control_step + 1}/{total_steps}] local: joystick sender")
+    print(f"[{control_step + 2}/{total_steps}] local: web height-map visualizer" if args.web_visualizer else f"[{control_step + 2}/{total_steps}] local: web visualizer disabled")
     start_local(args, tag)
     print("[deploy] startup commands completed")
     if args.dry_run:
@@ -442,6 +580,8 @@ def parse_args():
     parser.add_argument("--wait-control-sec", type=float, default=20.0)
     parser.add_argument("--lio-start-timeout-sec", type=float, default=12.0)
     parser.add_argument("--lio-start-attempts", type=int, default=4)
+    parser.add_argument("--lio-recover-attempts", type=int, default=3)
+    parser.add_argument("--height-frame-attempts", type=int, default=2)
     parser.add_argument("--height-enable-timeout-sec", type=float, default=10.0)
     parser.add_argument("--sdk-mode-timeout-sec", type=float, default=20.0)
     parser.add_argument("--start-103-timeout-sec", type=float, default=90.0)
