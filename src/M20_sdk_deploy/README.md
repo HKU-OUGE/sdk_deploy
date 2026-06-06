@@ -152,24 +152,23 @@ python3 src/M20_sdk_deploy/scripts/real_robot_deploy.py start --no-open-browser
 
 上面的命令在 bash/zsh 下都可直接复制。默认 sudo 密码是单引号 `'`，脚本内部会自动填写，不需要在命令行手写这个单引号。
 
-可选：在新电脑上先配置 103/106 免密 SSH，后续一键启动就不需要输入 SSH 登录密码：
+可选：在新电脑上先配置 103 免密 SSH，后续一键启动就不需要输入 SSH 登录密码：
 
 ```bash
 ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519 -N "" -C "$(whoami)@$(hostname)" 2>/dev/null || true
 ssh-copy-id -i ~/.ssh/id_ed25519.pub user@10.21.41.1
-ssh-copy-id -i ~/.ssh/id_ed25519.pub -o ProxyJump=user@10.21.41.1 user@10.21.33.106
 ```
 
 脚本会依次完成：
 
-1. 预检本机、103、106 的路径和关键文件。
-2. 103：确认/启动 LIO，尝试开启 height map，进入 SDK mode (`/SDK_MODE command:200`)。
+1. 预检本机，默认把本机最新 `noisy_elevation_node.py` 同步到 103，再检查 103 的路径、二进制和关键脚本。
+2. 103：确认/启动 LIO 和官方 `height_map_nav`，必要时调用 `/HEIGHT_MAP_ENABLE`，进入 SDK mode (`/SDK_MODE command:200`)。
 3. 103：启动 `lidar_to_scan_cpp`，发布旧平台/爬行策略需要的 `/scan/multi_layer_features_array`（992 维），随后启动本仓库 `rl_deploy`。
-4. 106：启动 `noisy_elevation_node.py`，发布 `/perception/noisy_elevation_array`。
-5. 106：等待 `/height_map` 首帧，确认网页可视化不会打开空数据页面。
+4. 103：启动 `noisy_elevation_node.py`，从官方 `/height_map` + `/CLOUD_REGISTERED_BODY` 生成 `/perception/noisy_elevation_array`。
+5. 103：等待 `/perception/noisy_elevation_array` 首帧，确认 Y 策略有 691 维感知输入。
 6. 等待 103 上 TCP 控制端口 `:9999` 监听。
 7. 本机：启动 `joy_tcp_sender.py`，把手柄数据发往 `10.21.41.1:9999`。
-8. 本机：启动高度图 3D 网页可视化 `http://127.0.0.1:8765/`。
+8. 本机：启动官方高度图 3D 网页可视化 `http://127.0.0.1:8765/`。
 
 常用命令：
 
@@ -289,19 +288,22 @@ ros2 service call /SDK_MODE drdds/srv/StdSrvInt32 "{command: 0}"
 
 ## 感知节点 `scripts/noisy_elevation_node.py`
 
-部署在感知机 (106)，发布完整 691 维数组到 `/perception/noisy_elevation_array`：
+默认部署在 103，发布完整 691 维数组到 `/perception/noisy_elevation_array`：
 - **forward/backward_scan (252 each)**：点云按 `multi_pitch_arc` 几何分格（pitch 12 档 ∈[-25,25]°，azimuth 21 档 ∈[-45,45]°，boresight ±X，flatten `k=pitch*21+az`），归一化 `clip(d/2.5,0,1)`、`<0.3m→1.0`。
-- **height_scan (187)**：17×11 @0.1m yaw 网格，`clamp(-terrain_z_base - 0.5, -1, 1)`，terrain 取自 base 系高程网格；**不依赖 odom 绝对 z**。
+- **height_scan (187)**：17×11 @0.1m yaw 网格。MuJoCo 使用 `height_map_mode:=terrain_z_base`；真机官方 `/height_map` 使用 `height_map_mode:=official_centered`，以机器人中心附近地面为 0，高台/墙为负、坑/下台阶为正。
 
-参数：`lidar_topic`（默认 `/LIDAR_SIM_RAW`；真机 `/CLOUD_REGISTERED_BODY`）、`height_topic`（默认 `/height_map`）。
+参数：`lidar_topic`（默认 `/LIDAR_SIM_RAW`；真机 `/CLOUD_REGISTERED_BODY`）、`height_topic`（默认 `/height_map`）、`height_map_mode`。
 
 ```bash
 # Sim
 python3 src/M20_sdk_deploy/scripts/noisy_elevation_node.py
 
-# 真机 (106)
+# 真机默认路径在 103 上运行
 python3 src/M20_sdk_deploy/scripts/noisy_elevation_node.py \
-  --ros-args -p lidar_topic:=/CLOUD_REGISTERED_BODY -p height_topic:=/height_map
+  --ros-args \
+  -p lidar_topic:=/CLOUD_REGISTERED_BODY \
+  -p height_topic:=/height_map \
+  -p height_map_mode:=official_centered
 ```
 
 ## 真机注意事项（重要）

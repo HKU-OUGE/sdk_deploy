@@ -3,7 +3,7 @@
 
 Default network topology:
   local PC -> 103 WiFi host: user@10.21.41.1
-  local PC -> 106 perception host through 103: user@10.21.33.106
+  optional legacy perception: local PC -> 106 through 103: user@10.21.33.106
 
 The script starts only this repo's deployment processes.  It leaves vendor
 processes under /opt/robot running, except for restarting LIO/height-map
@@ -102,12 +102,79 @@ def preflight_local(args):
     print("== preflight: local ==")
     require_file(REPO_ROOT / "src/M20_sdk_deploy/scripts/joy_tcp_sender.py", "joystick sender")
     require_file(REPO_ROOT / "src/M20_sdk_deploy/scripts/visualize_height_map_web3d_ssh.py", "height-map visualizer")
+    require_file(REPO_ROOT / "src/M20_sdk_deploy/scripts/noisy_elevation_node.py", "noisy elevation node")
     if not Path(args.joy_device).exists():
         print(f"[warn] joystick device does not exist yet: {args.joy_device}", flush=True)
     if args.web_visualizer and not local_port_is_free(args.visual_port):
         raise RuntimeError(f"local visualizer port is already in use: 127.0.0.1:{args.visual_port}")
     if shutil.which("ssh") is None:
         raise RuntimeError("ssh command not found")
+    if args.sync_remote_scripts and shutil.which("scp") is None:
+        raise RuntimeError("scp command not found")
+
+
+def cleanup_local_deploy_processes(args):
+    if args.dry_run:
+        return
+    for unit in (
+        f"m20-official-heightmap-{args.visual_port}.service",
+        f"m20-heightpoints-{args.visual_port}.service",
+        "m20-heightmap-8767.service",
+    ):
+        subprocess.run(
+            ["systemctl", "--user", "stop", unit],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        subprocess.run(
+            ["systemctl", "--user", "reset-failed", unit],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+    local = subprocess.run(
+        ["pgrep", "-f", "[j]oy_tcp_sender.py|[v]isualize_height_map_web3d_ssh.py"],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    for pid_s in local.stdout.split():
+        pid = int(pid_s)
+        if pid != os.getpid():
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+    time.sleep(0.5)
+
+
+def scp_file(local_path, host, remote_path, *, jump=None, timeout=20):
+    cmd = ["scp", "-o", "ConnectTimeout=8"]
+    if jump:
+        cmd += ["-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/tmp/known_hosts_106_via_103", "-J", jump]
+    cmd += [str(local_path), f"{host}:{remote_path}"]
+    return run(cmd, timeout=timeout)
+
+
+def sync_remote_scripts(args):
+    if not args.sync_remote_scripts:
+        return
+    local_noisy = REPO_ROOT / "src/M20_sdk_deploy/scripts/noisy_elevation_node.py"
+    remote_dir = f"{REMOTE_ROOT}/src/M20_sdk_deploy/scripts"
+    remote_noisy = f"{remote_dir}/noisy_elevation_node.py"
+    if args.dry_run:
+        print(f"[dry-run] sync {local_noisy} -> {args.host103}:{remote_noisy}")
+        if args.legacy_106_perception:
+            print(f"[dry-run] sync {local_noisy} -> {args.host106}:{remote_noisy} via {args.jump}")
+        return
+    print("== sync remote python scripts ==", flush=True)
+    ssh_cmd(args.host103, f"mkdir -p {remote_dir}", timeout=15)
+    scp_file(local_noisy, args.host103, remote_noisy, timeout=20)
+    if args.legacy_106_perception:
+        ssh_cmd(args.host106, f"mkdir -p {remote_dir}", jump=args.jump, timeout=15)
+        scp_file(local_noisy, args.host106, remote_noisy, jump=args.jump, timeout=20)
 
 
 def preflight_remote(args):
@@ -118,14 +185,19 @@ test -d {REMOTE_ROOT}
 test -f {REMOTE_ROOT}/install/setup.bash
 test -x {REMOTE_ROOT}/install/m20_sdk_deploy/lib/m20_sdk_deploy/rl_deploy
 test -x {REMOTE_ROOT}/install/m20_sdk_deploy/lib/m20_sdk_deploy/lidar_to_scan_cpp
+test -f {REMOTE_ROOT}/src/M20_sdk_deploy/scripts/noisy_elevation_node.py
 test -f /opt/ros/foxy/setup.bash
 test -f /opt/robot/scripts/setup_ros2.sh
 command -v ros2 >/dev/null || true
 systemctl is-active lio_perception.service >/dev/null || true
 systemctl is-active height_map_nav.service >/dev/null || true
+python3 -m py_compile {REMOTE_ROOT}/src/M20_sdk_deploy/scripts/noisy_elevation_node.py
 echo "103 preflight ok"
 """
     sudo_script(args.host103, script103, timeout=25)
+
+    if not args.legacy_106_perception:
+        return
 
     print("== preflight: 106 ==")
     script106 = f"""
@@ -143,6 +215,7 @@ def preflight(args):
         print("[dry-run] skip preflight checks")
         return
     preflight_local(args)
+    sync_remote_scripts(args)
     preflight_remote(args)
 
 
@@ -188,7 +261,106 @@ run_with_timeout() {{
   done
   wait "$cmd_pid"
 }}
+drdds_int32_call_python() {{
+  service_name="$1"
+  command_value="$2"
+  timeout_sec="$3"
+  node_name="$4"
+  tmp=$(mktemp)
+  set +e
+  run_with_timeout "$timeout_sec" python3 - "$service_name" "$command_value" "$timeout_sec" "$node_name" <<'PY' > "$tmp" 2>&1
+import os
+import sys
+import time
+
+import rclpy
+from rclpy.node import Node
+from drdds.srv import StdSrvInt32
+
+
+service_name = sys.argv[1]
+command_value = int(sys.argv[2])
+timeout_sec = float(sys.argv[3])
+node_name = sys.argv[4]
+
+try:
+    rclpy.init(args=None)
+    node = Node(node_name)
+    client = node.create_client(StdSrvInt32, service_name)
+    deadline = time.time() + timeout_sec
+    while not client.wait_for_service(timeout_sec=0.2):
+        if time.time() >= deadline:
+            print(f"{{service_name}} unavailable", flush=True)
+            os._exit(2)
+    req = StdSrvInt32.Request()
+    req.command = command_value
+    future = client.call_async(req)
+    while not future.done() and time.time() < deadline:
+        rclpy.spin_once(node, timeout_sec=0.1)
+    if not future.done():
+        print(f"{{service_name}} timeout", flush=True)
+        os._exit(3)
+    result = int(getattr(future.result(), "result", 0))
+    print(f"{{service_name}} result={{result}}", flush=True)
+    os._exit(0 if result == 1 else 4)
+except Exception as exc:
+    print(f"{{service_name}} exception={{type(exc).__name__}}: {{exc}}", flush=True)
+    os._exit(5)
+PY
+  rc=$?
+  set -e
+  cat "$tmp"
+  if grep -q "$service_name result=1" "$tmp" || grep -q "$service_name result: 1" "$tmp"; then
+    rm -f "$tmp"
+    return 0
+  fi
+  rm -f "$tmp"
+  return 1
+}}
+ros2_int32_call_fallback() {{
+  service_name="$1"
+  command_value="$2"
+  timeout_sec="$3"
+  tmp=$(mktemp)
+  set +e
+  run_with_timeout "$timeout_sec" ros2 service call "$service_name" drdds/srv/StdSrvInt32 "{{command: $command_value}}" > "$tmp" 2>&1
+  rc=$?
+  set -e
+  cat "$tmp"
+  if grep -q 'result=1' "$tmp" || grep -q 'result: 1' "$tmp"; then
+    rm -f "$tmp"
+    return 0
+  fi
+  rm -f "$tmp"
+  return 1
+}}
+drdds_int32_call() {{
+  service_name="$1"
+  command_value="$2"
+  timeout_sec="$3"
+  node_name="$4"
+  if drdds_int32_call_python "$service_name" "$command_value" "$timeout_sec" "$node_name"; then
+    return 0
+  fi
+  echo "[warn] python service call failed for $service_name; falling back to ros2 CLI"
+  ros2_int32_call_fallback "$service_name" "$command_value" "$timeout_sec"
+}}
+height_map_enable_call() {{
+  drdds_int32_call /HEIGHT_MAP_ENABLE 1 {args.height_enable_timeout_sec} height_map_enable_client
+}}
 sdk_mode_call() {{
+  attempt=1
+  while [ "$attempt" -le {args.sdk_mode_attempts} ]; do
+    echo "[103] SDK_MODE attempt $attempt/{args.sdk_mode_attempts}"
+    if drdds_int32_call /SDK_MODE {args.sdk_rate} {args.sdk_mode_timeout_sec} "sdk_mode_client_$attempt"; then
+      return 0
+    fi
+    sleep 1
+    attempt=$((attempt + 1))
+  done
+  return 1
+}}
+sdk_mode_call_cli_legacy() {{
   tmp=$(mktemp)
   set +e
   run_with_timeout {args.sdk_mode_timeout_sec} ros2 service call /SDK_MODE drdds/srv/StdSrvInt32 "{{command: {args.sdk_rate}}}" > "$tmp" 2>&1
@@ -200,12 +372,13 @@ sdk_mode_call() {{
     return 0
   fi
   rm -f "$tmp"
-  return "$rc"
+  return 1
 }}
 cloud_frame_available() {{
   tmp=$(mktemp)
   set +e
   run_with_timeout 6.0 python3 - <<'PY' > "$tmp" 2>&1
+import os
 import time
 
 import rclpy
@@ -230,10 +403,8 @@ deadline = time.time() + 4.0
 while time.time() < deadline and not node.ok:
     rclpy.spin_once(node, timeout_sec=0.2)
 ok = node.ok
-node.destroy_node()
-rclpy.shutdown()
-print("CLOUD_FRAME ok" if ok else "CLOUD_FRAME missing")
-raise SystemExit(0 if ok else 2)
+print("CLOUD_FRAME ok" if ok else "CLOUD_FRAME missing", flush=True)
+os._exit(0 if ok else 2)
 PY
   rc=$?
   set -e
@@ -243,13 +414,59 @@ PY
     return 0
   fi
   rm -f "$tmp"
-  return "$rc"
+  return 1
+}}
+height_map_frame_available() {{
+  tmp=$(mktemp)
+  set +e
+  run_with_timeout 6.0 python3 - <<'PY' > "$tmp" 2>&1
+import os
+import time
+
+import rclpy
+from rclpy.node import Node
+from sensor_msgs.msg import PointCloud2
+
+
+class Probe(Node):
+    def __init__(self):
+        super().__init__("height_map_probe")
+        self.frame = None
+        self.create_subscription(PointCloud2, "/height_map", self.cb, 10)
+
+    def cb(self, msg):
+        if msg.width * msg.height > 0:
+            self.frame = (int(msg.width), int(msg.height))
+
+
+rclpy.init(args=None)
+node = Probe()
+deadline = time.time() + 4.0
+while time.time() < deadline and node.frame is None:
+    rclpy.spin_once(node, timeout_sec=0.2)
+if node.frame is None:
+    print("HEIGHT_MAP_FRAME missing", flush=True)
+    os._exit(2)
+width, height = node.frame
+print(f"HEIGHT_MAP_FRAME ok {{width}}x{{height}}", flush=True)
+os._exit(0)
+PY
+  rc=$?
+  set -e
+  cat "$tmp"
+  if grep -q 'HEIGHT_MAP_FRAME ok' "$tmp"; then
+    rm -f "$tmp"
+    return 0
+  fi
+  rm -f "$tmp"
+  return 1
 }}
 scan_frame_available() {{
   tmp=$(mktemp)
   set +e
   run_with_timeout 8.0 python3 - <<'PY' > "$tmp" 2>&1
 import math
+import os
 import time
 
 import rclpy
@@ -277,14 +494,11 @@ deadline = time.time() + 6.0
 while time.time() < deadline and node.frame is None:
     rclpy.spin_once(node, timeout_sec=0.2)
 if node.frame is None:
-    print("SCAN_FRAME missing")
-    node.destroy_node()
-    rclpy.shutdown()
-    raise SystemExit(2)
+    print("SCAN_FRAME missing", flush=True)
+    os._exit(2)
 dim, v_min, v_max = node.frame
-print(f"SCAN_FRAME ok dim={{dim}} min={{v_min:.3f}} max={{v_max:.3f}}")
-node.destroy_node()
-rclpy.shutdown()
+print(f"SCAN_FRAME ok dim={{dim}} min={{v_min:.3f}} max={{v_max:.3f}}", flush=True)
+os._exit(0)
 PY
   rc=$?
   set -e
@@ -294,7 +508,7 @@ PY
     return 0
   fi
   rm -f "$tmp"
-  return "$rc"
+  return 1
 }}
 start_lio_with_retries() {{
   attempt=1
@@ -330,9 +544,18 @@ start_lio_with_retries() {{
 source /opt/ros/foxy/setup.bash
 source /opt/robot/scripts/setup_ros2.sh
 mkdir -p {REMOTE_LOG_DIR}/{tag}
-systemctl restart lio_perception.service height_map_nav.service || true
-start_lio_with_retries || true
-run_with_timeout {args.height_enable_timeout_sec} ros2 service call /HEIGHT_MAP_ENABLE drdds/srv/StdSrvInt32 "{{command: 1}}" || echo "[warn] HEIGHT_MAP_ENABLE timed out or failed; continuing"
+if systemctl is-active --quiet lio_perception.service && systemctl is-active --quiet height_map_nav.service && cloud_frame_available && height_map_frame_available; then
+  echo "[103] LIO and official /height_map already have frames; skip service restart"
+else
+  systemctl restart lio_perception.service height_map_nav.service || true
+  start_lio_with_retries || true
+fi
+if height_map_frame_available; then
+  echo "[103] /height_map already has frames; skip HEIGHT_MAP_ENABLE"
+else
+  height_map_enable_call || echo "[warn] HEIGHT_MAP_ENABLE timed out or failed; continuing"
+  height_map_frame_available || echo "[warn] /height_map still has no frame after HEIGHT_MAP_ENABLE"
+fi
 if ! sdk_mode_call; then
   echo "[error] SDK_MODE command failed or timed out"
   exit 1
@@ -353,6 +576,23 @@ if [ "{str(args.legacy_scan).lower()}" = "true" ]; then
     echo "[warn] /scan/multi_layer_features_array is missing; platform/crawl policies will see no-hit scan values"
   fi
 fi
+if [ "{str(not args.legacy_106_perception).lower()}" = "true" ]; then
+  perception_log={REMOTE_LOG_DIR}/{tag}/noisy_elevation_103_official_heightmap.log
+  pkill -TERM -f {REMOTE_ROOT}/src/M20_sdk_deploy/scripts/noisy_elevation_node.py || true
+  pkill -TERM -f 'src/M20_sdk_deploy/scripts/noisy_elevation_node.py' || true
+  nohup python3 -u src/M20_sdk_deploy/scripts/noisy_elevation_node.py \\
+    --ros-args \\
+    -p lidar_topic:=/CLOUD_REGISTERED_BODY \\
+    -p height_topic:=/height_map \\
+    -p height_map_mode:={args.official_height_map_mode} \\
+    -p terrain_cache_scan:=false \\
+    -p fk_height_scan:=false \\
+    -p zero_height_scan:=false \\
+    > "$perception_log" 2>&1 < /dev/null &
+  echo "official height-map noisy_elevation log=$perception_log"
+  sleep 1
+  pgrep -af "{REMOTE_ROOT}/src/M20_sdk_deploy/scripts/noisy_elevation_node.py|src/M20_sdk_deploy/scripts/noisy_elevation_node.py" || true
+fi
 log={REMOTE_LOG_DIR}/{tag}/rl_deploy_103.log
 pkill -TERM -f {REMOTE_ROOT}/install/m20_sdk_deploy/lib/m20_sdk_deploy/rl_deploy || true
 nohup ros2 run m20_sdk_deploy rl_deploy > "$log" 2>&1 < /dev/null &
@@ -365,6 +605,61 @@ ss -ltnp 2>/dev/null | grep ':9999' || true
         print("[dry-run] 103 script:\n" + script)
         return
     sudo_script(args.host103, script, timeout=args.start_103_timeout_sec)
+
+
+def wait_for_103_perception_frame(args):
+    if args.dry_run:
+        print("[dry-run] skip waiting for 103 noisy_elevation frame")
+        return
+    check_script = r"""
+set -e
+source /opt/ros/foxy/setup.bash
+source /opt/robot/scripts/setup_ros2.sh
+python3 - <<'PY'
+import math
+import os
+import time
+
+import numpy as np
+import rclpy
+from rclpy.node import Node
+from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
+from std_msgs.msg import Float32MultiArray
+
+
+class Probe(Node):
+    def __init__(self):
+        super().__init__("official_noisy_elevation_probe")
+        self.frame = None
+        qos = QoSProfile(depth=10)
+        qos.history = HistoryPolicy.KEEP_LAST
+        qos.reliability = ReliabilityPolicy.RELIABLE
+        qos.durability = DurabilityPolicy.VOLATILE
+        self.create_subscription(Float32MultiArray, "/perception/noisy_elevation_array", self.cb, qos)
+
+    def cb(self, msg):
+        data = np.asarray(msg.data, dtype=np.float32)
+        if data.size == 691 and np.all(np.isfinite(data)):
+            h = data[:187]
+            self.frame = (data.size, float(h.min()), float(h.max()), float(h.mean()))
+
+
+rclpy.init()
+node = Probe()
+deadline = time.time() + 8.0
+while time.time() < deadline and node.frame is None:
+    rclpy.spin_once(node, timeout_sec=0.2)
+if node.frame is None:
+    print("NOISY_ELEVATION_FRAME missing", flush=True)
+    os._exit(2)
+dim, h_min, h_max, h_mean = node.frame
+print(f"NOISY_ELEVATION_FRAME ok dim={dim} height_min={h_min:.3f} height_max={h_max:.3f} height_mean={h_mean:.3f}", flush=True)
+os._exit(0)
+PY
+"""
+    out = sudo_script(args.host103, check_script, timeout=20, check=False)
+    if out.returncode != 0:
+        raise RuntimeError("103 /perception/noisy_elevation_array did not produce a valid 691-dim frame")
 
 
 def ensure_103_lio_data(args):
@@ -518,9 +813,11 @@ def start_local(args, tag):
             "-u",
             str(REPO_ROOT / "src/M20_sdk_deploy/scripts/visualize_height_map_web3d_ssh.py"),
             "--remote",
-            args.host106,
+            args.visual_remote or args.host103,
             "--jump",
-            args.jump,
+            args.visual_jump,
+            "--height-topic",
+            args.visual_height_topic,
             "--rate",
             str(args.visual_rate),
             "--stride",
@@ -549,14 +846,15 @@ def status(args):
     print("== 103 ==")
     out103 = ssh_capture(
         args.host103,
-        "pgrep -af '[s]dk_deploy_tty|[m]20_sdk_deploy|[r]l_deploy|[l]idar_to_scan|[l]io_ddsnode|[r]slidar' || true; "
+        "pgrep -af '[s]dk_deploy_tty|[m]20_sdk_deploy|[r]l_deploy|[l]idar_to_scan|[n]oisy_elevation_node|[h]eight_map_nav|[l]io_ddsnode|[r]slidar' || true; "
         "ss -ltnp 2>/dev/null | grep ':9999' || true",
         timeout=10,
     )
     print(out103.stdout)
-    print("== 106 ==")
-    out106 = ssh_capture(args.host106, "pgrep -af '[n]oisy_elevation_node.py|[h]andler|[r]slidar' || true", jump=args.jump, timeout=10)
-    print(out106.stdout)
+    if args.legacy_106_perception:
+        print("== 106 ==")
+        out106 = ssh_capture(args.host106, "pgrep -af '[n]oisy_elevation_node.py|[h]andler|[r]slidar' || true", jump=args.jump, timeout=10)
+        print(out106.stdout)
 
 
 def stop(args):
@@ -591,12 +889,15 @@ def stop(args):
             except ProcessLookupError:
                 pass
 
-    print("== stopping 106 noisy elevation ==")
-    sudo_script(args.host106, "pkill -TERM -f noisy_elevation_node.py || true\n", jump=args.jump, timeout=15, check=False)
+    if args.legacy_106_perception:
+        print("== stopping 106 noisy elevation ==")
+        sudo_script(args.host106, "pkill -TERM -f noisy_elevation_node.py || true\n", jump=args.jump, timeout=15, check=False)
 
     print("== stopping 103 deploy rl and exiting SDK mode ==")
     script = f"""
 set +e
+pkill -TERM -f {REMOTE_ROOT}/src/M20_sdk_deploy/scripts/noisy_elevation_node.py
+pkill -TERM -f 'src/M20_sdk_deploy/scripts/noisy_elevation_node.py'
 pkill -TERM -f {REMOTE_ROOT}/install/m20_sdk_deploy/lib/m20_sdk_deploy/rl_deploy
 pkill -TERM -f 'ros2 run m20_sdk_deploy rl_deploy'
 pkill -TERM -f {REMOTE_ROOT}/install/m20_sdk_deploy/lib/m20_sdk_deploy/lidar_to_scan_cpp
@@ -604,7 +905,39 @@ pkill -TERM -f 'ros2 run m20_sdk_deploy lidar_to_scan_cpp'
 sleep 1
 source /opt/ros/foxy/setup.bash
 source /opt/robot/scripts/setup_ros2.sh 2>/dev/null || true
-ros2 service call /SDK_MODE drdds/srv/StdSrvInt32 "{{command: 0}}"
+python3 - <<'PY' || ros2 service call /SDK_MODE drdds/srv/StdSrvInt32 "{{command: 0}}"
+import os
+import time
+
+import rclpy
+from rclpy.node import Node
+from drdds.srv import StdSrvInt32
+
+
+try:
+    rclpy.init(args=None)
+    node = Node("sdk_mode_exit_client")
+    client = node.create_client(StdSrvInt32, "/SDK_MODE")
+    deadline = time.time() + 10.0
+    while not client.wait_for_service(timeout_sec=0.2):
+        if time.time() >= deadline:
+            print("/SDK_MODE exit unavailable", flush=True)
+            os._exit(2)
+    req = StdSrvInt32.Request()
+    req.command = 0
+    future = client.call_async(req)
+    while not future.done() and time.time() < deadline:
+        rclpy.spin_once(node, timeout_sec=0.1)
+    if not future.done():
+        print("/SDK_MODE exit timeout", flush=True)
+        os._exit(3)
+    result = int(getattr(future.result(), "result", 0))
+    print("/SDK_MODE exit result=%d" % result, flush=True)
+    os._exit(0 if result == 1 else 4)
+except Exception as exc:
+    print("/SDK_MODE exit exception=%s: %s" % (type(exc).__name__, exc), flush=True)
+    os._exit(5)
+PY
 """
     sudo_script(args.host103, script, timeout=30, check=False)
     status(args)
@@ -613,17 +946,28 @@ ros2 service call /SDK_MODE drdds/srv/StdSrvInt32 "{{command: 0}}"
 def start(args):
     tag = args.tag or now_tag()
     print(f"[deploy] tag={tag}")
+    cleanup_local_deploy_processes(args)
     if not args.skip_preflight:
         preflight(args)
-    total_steps = 6 if args.web_visualizer else 5
-    print(f"[1/{total_steps}] 103: LIO/height map, SDK mode, rl_deploy")
+    total_steps = 5 if args.web_visualizer else 4
+    if args.legacy_106_perception:
+        total_steps += 1
+    print(f"[1/{total_steps}] 103: LIO/official height map, SDK mode, rl_deploy")
     start_103(args, tag)
-    print(f"[2/{total_steps}] 106: noisy_elevation_node")
-    start_106(args, tag)
-    if args.web_visualizer:
-        print(f"[3/{total_steps}] wait for 106 height-map frame")
-        wait_for_106_height_map_frame(args)
-    control_step = 4 if args.web_visualizer else 3
+    next_step = 2
+    if args.legacy_106_perception:
+        print(f"[{next_step}/{total_steps}] 106: legacy noisy_elevation_node")
+        start_106(args, tag)
+        next_step += 1
+        if args.web_visualizer:
+            print(f"[{next_step}/{total_steps}] wait for 106 height-map frame")
+            wait_for_106_height_map_frame(args)
+            next_step += 1
+    else:
+        print(f"[{next_step}/{total_steps}] wait for 103 official noisy_elevation frame")
+        wait_for_103_perception_frame(args)
+        next_step += 1
+    control_step = next_step
     print(f"[{control_step}/{total_steps}] wait for 103 TCP control port")
     wait_for_103_control_port(args)
     print(f"[{control_step + 1}/{total_steps}] local: joystick sender")
@@ -651,11 +995,16 @@ def parse_args():
     parser.add_argument("--joy-rate", type=float, default=200.0)
     parser.add_argument("--cache-ttl-sec", type=float, default=8.0)
     parser.add_argument("--cache-radius-m", type=float, default=3.0)
+    parser.add_argument("--legacy-106-perception", action="store_true", help="use old 106 noisy_elevation_node path; default uses official /height_map on 103")
+    parser.add_argument("--official-height-map-mode", choices=["official_centered", "official_relative", "terrain_z_base"], default="official_centered", help="height_scan conversion for official 103 /height_map")
     parser.add_argument("--legacy-scan", action=argparse.BooleanOptionalAction, default=True, help="start 103 lidar_to_scan_cpp for legacy 992-dim platform/crawl policies")
     parser.add_argument("--scan-lidar-topic", default="/CLOUD_REGISTERED_BODY")
     parser.add_argument("--web-visualizer", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--visual-remote", default="", help="remote host for web visualizer; default host103")
+    parser.add_argument("--visual-jump", default="", help="jump host for web visualizer; default none because official /height_map is on 103")
+    parser.add_argument("--visual-height-topic", default="/height_map")
     parser.add_argument("--visual-rate", type=float, default=3.0)
-    parser.add_argument("--visual-stride", type=int, default=2)
+    parser.add_argument("--visual-stride", type=int, default=1)
     parser.add_argument("--visual-port", type=int, default=8765)
     parser.add_argument("--wait-control-sec", type=float, default=20.0)
     parser.add_argument("--lio-start-timeout-sec", type=float, default=12.0)
@@ -664,7 +1013,9 @@ def parse_args():
     parser.add_argument("--height-frame-attempts", type=int, default=2)
     parser.add_argument("--height-enable-timeout-sec", type=float, default=10.0)
     parser.add_argument("--sdk-mode-timeout-sec", type=float, default=20.0)
-    parser.add_argument("--start-103-timeout-sec", type=float, default=90.0)
+    parser.add_argument("--sdk-mode-attempts", type=int, default=3)
+    parser.add_argument("--start-103-timeout-sec", type=float, default=160.0)
+    parser.add_argument("--sync-remote-scripts", action=argparse.BooleanOptionalAction, default=True, help="copy Python perception helpers to the robot before remote preflight")
     parser.add_argument("--skip-preflight", action="store_true")
     parser.add_argument("--no-open-browser", action="store_true")
     parser.add_argument("--tag", default="")

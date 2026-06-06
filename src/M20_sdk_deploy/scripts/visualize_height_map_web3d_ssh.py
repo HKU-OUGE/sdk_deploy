@@ -30,7 +30,50 @@ import numpy as np
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import PointCloud2
-from sensor_msgs_py import point_cloud2
+
+
+def read_xyz(msg):
+    fields = {field.name: field for field in msg.fields}
+    if not all(name in fields for name in ("x", "y", "z")):
+        return None
+    if any(fields[name].datatype != 7 for name in ("x", "y", "z")):
+        return None
+    point_step = int(msg.point_step)
+    row_step = int(msg.row_step)
+    width = int(msg.width)
+    height = int(msg.height)
+    if point_step <= 0 or width <= 0 or height <= 0:
+        return None
+    dtype = ">f4" if msg.is_bigendian else "<f4"
+    data = memoryview(msg.data)
+    count = width * height
+
+    def one_field(name):
+        offset = int(fields[name].offset)
+        if row_step == point_step * width:
+            return np.ndarray(
+                shape=(count,),
+                dtype=dtype,
+                buffer=data,
+                offset=offset,
+                strides=(point_step,),
+            ).copy()
+        out = np.empty(count, dtype=np.float32)
+        dst = 0
+        for row in range(height):
+            row_offset = row * row_step + offset
+            vals = np.ndarray(
+                shape=(width,),
+                dtype=dtype,
+                buffer=data,
+                offset=row_offset,
+                strides=(point_step,),
+            )
+            out[dst:dst + width] = vals
+            dst += width
+        return out
+
+    return one_field("x"), one_field("y"), one_field("z")
 
 
 class Streamer(Node):
@@ -46,17 +89,10 @@ class Streamer(Node):
         if now - self.last_sent < self.period:
             return
         self.last_sent = now
-        pts = list(point_cloud2.read_points(msg, field_names=("x", "y", "z"), skip_nans=False))
-        if not pts:
+        xyz = read_xyz(msg)
+        if xyz is None:
             return
-        arr = np.asarray(pts)
-        if arr.dtype.names is not None:
-            x = arr["x"].astype(np.float32)
-            y = arr["y"].astype(np.float32)
-            z = arr["z"].astype(np.float32)
-        else:
-            arr = arr.astype(np.float32)
-            x, y, z = arr[:, 0], arr[:, 1], arr[:, 2]
+        x, y, z = xyz
         finite_xy = np.isfinite(x) & np.isfinite(y)
         if not np.any(finite_xy):
             return
@@ -369,6 +405,7 @@ def parse_args():
     parser.add_argument("--height-topic", default="/height_map")
     parser.add_argument("--rate", type=float, default=3.0)
     parser.add_argument("--stride", type=int, default=2, help="downsample grid for smoother browser rendering")
+    parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--sudo", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--sudo-password", default=os.environ.get("M20_SUDO_PASSWORD", "'"))
@@ -383,14 +420,14 @@ def main():
     shared = Shared()
     reader = threading.Thread(target=start_reader, args=(args, shared), daemon=True)
     reader.start()
-    server = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(shared))
+    server = ThreadingHTTPServer((args.host, args.port), make_handler(shared))
     url = f"http://127.0.0.1:{args.port}/"
     print(f"height-map web3d: {url}", flush=True)
     if not args.no_open:
         webbrowser.open(url)
 
     def stop(_signum=None, _frame=None):
-        server.shutdown()
+        threading.Thread(target=server.shutdown, daemon=True).start()
 
     signal.signal(signal.SIGINT, stop)
     signal.signal(signal.SIGTERM, stop)

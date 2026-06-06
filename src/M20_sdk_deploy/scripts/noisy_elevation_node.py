@@ -14,11 +14,10 @@ forward/backward_scan 几何 = 训练 multi_pitch_arc_pattern + multi_layer_scan
 
 height_scan(187): 17×11 yaw 网格 @0.1m (x∈[-0.8,0.8], y∈[-0.5,0.5]),
     flatten x-minor/y-major (idx = y_idx*17 + x_idx, 对齐 onnx reshape[11,17])。
-    值 = clamp(base_z - terrain_z - 0.5, -1, 1)。terrain 取自 base 系高程网格
-    /height_map (height_map_nav, 81×81@0.1m base_link), base 系下 terrain_z_base = -(base距地高),
-    故 height_scan = -terrain_z_base - 0.5。**不依赖 odom 绝对 z** (对 LIO z 漂移/恒0 免疫)。
-    注意: 真机 /height_map 需先 ros2 service call /HEIGHT_MAP_ENABLE drdds/srv/StdSrvInt32 "{command: 1}";
-    /HEIGHT_POINTS 是死占位(恒 -0.4)勿用。已在真机 /height_map 上验证 187 维输出合理(0空洞)。
+    训练定义是 clamp(base_z - terrain_z - 0.5, -1, 1)。
+    sim /height_map 发布 terrain_z_base = terrain_world_z - base_z, 因此旧模式使用 -terrain_z_base - 0.5。
+    M20 官方 /height_map 已经过 height_map_nav 的 robot_height/base_gravity_frame 处理, 不再额外减 0.5;
+    真机官方模式用中心地面高度作零点, 保持高台/障碍为负、坑/下台阶为正。
 
 话题 (参数化):
     lidar_topic   默认 /LIDAR_SIM_RAW   (sim mujoco; 真机改 /CLOUD_REGISTERED_BODY ~10Hz, base 系点云)
@@ -36,8 +35,12 @@ import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import PointCloud2
 from sensor_msgs.msg import Imu
-from sensor_msgs_py import point_cloud2
 from std_msgs.msg import Float32MultiArray
+
+try:
+    from sensor_msgs_py import point_cloud2
+except Exception:
+    point_cloud2 = None
 
 try:
     from nav_msgs.msg import Odometry
@@ -139,15 +142,58 @@ def _bin_one_direction(pts, boresight_sign):
 
 
 def _cloud_to_xyz(msg):
-    raw = list(point_cloud2.read_points(msg, field_names=("x", "y", "z"), skip_nans=False))
-    if not raw:
+    if point_cloud2 is not None:
+        raw = list(point_cloud2.read_points(msg, field_names=("x", "y", "z"), skip_nans=False))
+        if not raw:
+            return np.empty((0, 3), dtype=np.float32)
+        a = np.array(raw)
+        if a.dtype.names is not None:
+            return np.column_stack((a['x'], a['y'], a['z'])).astype(np.float32)
+        return a.astype(np.float32)
+
+    fields = {field.name: field for field in msg.fields}
+    if not all(name in fields for name in ("x", "y", "z")):
         return np.empty((0, 3), dtype=np.float32)
-    a = np.array(raw)
-    if a.dtype.names is not None:
-        a = np.column_stack((a['x'], a['y'], a['z'])).astype(np.float32)
-    else:
-        a = a.astype(np.float32)
-    return a
+    if any(fields[name].datatype != 7 for name in ("x", "y", "z")):
+        return np.empty((0, 3), dtype=np.float32)
+
+    point_step = int(msg.point_step)
+    row_step = int(msg.row_step)
+    width = int(msg.width)
+    height = int(msg.height)
+    if point_step <= 0 or width <= 0 or height <= 0:
+        return np.empty((0, 3), dtype=np.float32)
+
+    dtype = ">f4" if msg.is_bigendian else "<f4"
+    data = memoryview(msg.data)
+    count = width * height
+
+    def read_field(name):
+        offset = int(fields[name].offset)
+        if row_step == point_step * width:
+            return np.ndarray(
+                shape=(count,),
+                dtype=dtype,
+                buffer=data,
+                offset=offset,
+                strides=(point_step,),
+            ).astype(np.float32, copy=True)
+        out = np.empty(count, dtype=np.float32)
+        dst = 0
+        for row in range(height):
+            row_offset = row * row_step + offset
+            vals = np.ndarray(
+                shape=(width,),
+                dtype=dtype,
+                buffer=data,
+                offset=row_offset,
+                strides=(point_step,),
+            )
+            out[dst:dst + width] = vals
+            dst += width
+        return out
+
+    return np.column_stack((read_field("x"), read_field("y"), read_field("z"))).astype(np.float32, copy=False)
 
 
 def _quat_to_rot(q):
@@ -178,6 +224,8 @@ class NoisyElevationNode(Node):
         self.declare_parameter('zero_height_scan', False)
         self.declare_parameter('fk_height_scan', False)
         self.declare_parameter('terrain_cache_scan', False)
+        self.declare_parameter('height_map_mode', 'terrain_z_base')
+        self.declare_parameter('height_center_kernel', 5)
         self.declare_parameter('cache_resolution', 0.1)
         self.declare_parameter('cache_ttl_sec', 8.0)
         self.declare_parameter('cache_radius_m', 3.0)
@@ -187,6 +235,15 @@ class NoisyElevationNode(Node):
         self.zero_height_scan = bool(self.get_parameter('zero_height_scan').value)
         self.fk_height_scan = bool(self.get_parameter('fk_height_scan').value)
         self.terrain_cache_scan = bool(self.get_parameter('terrain_cache_scan').value)
+        self.height_map_mode = str(self.get_parameter('height_map_mode').value).strip().lower()
+        self.height_center_kernel = int(self.get_parameter('height_center_kernel').value)
+        if self.height_map_mode not in ('terrain_z_base', 'official_relative', 'official_centered'):
+            self.get_logger().warn(f"unknown height_map_mode={self.height_map_mode}, using terrain_z_base")
+            self.height_map_mode = 'terrain_z_base'
+        if self.height_center_kernel < 1:
+            self.height_center_kernel = 1
+        if self.height_center_kernel % 2 == 0:
+            self.height_center_kernel += 1
         self.cache_res = float(self.get_parameter('cache_resolution').value)
         self.cache_ttl = float(self.get_parameter('cache_ttl_sec').value)
         self.cache_radius = float(self.get_parameter('cache_radius_m').value)
@@ -234,7 +291,7 @@ class NoisyElevationNode(Node):
             f"✅ noisy_elevation: lidar={lt} height={ht} | "
             f"height({HEIGHT_DIM}) + fwd({NUM_PER_DIR}) + bwd({NUM_PER_DIR}) = {NOISY_ELEV_DIM} | "
             f"zero_height_scan={self.zero_height_scan} fk_height_scan={self.fk_height_scan} "
-            f"terrain_cache_scan={self.terrain_cache_scan}")
+            f"terrain_cache_scan={self.terrain_cache_scan} height_map_mode={self.height_map_mode}")
 
     def odom_callback(self, msg):
         z = float(msg.pose.pose.position.z)
@@ -438,8 +495,23 @@ class NoisyElevationNode(Node):
         self.cache_misses = misses
         return out
 
+    def _official_center_ref(self, terrain_grid):
+        k = min(self.height_center_kernel, H_NX, H_NY)
+        if k % 2 == 0:
+            k -= 1
+        if k < 1:
+            k = 1
+        cy, cx = H_NY // 2, H_NX // 2
+        half = k // 2
+        patch = terrain_grid[cy - half: cy + half + 1, cx - half: cx + half + 1]
+        finite_patch = patch[np.isfinite(patch)]
+        if finite_patch.size:
+            return float(np.median(finite_patch))
+        finite_all = terrain_grid[np.isfinite(terrain_grid)]
+        return float(np.median(finite_all)) if finite_all.size else 0.0
+
     def compute_height_scan(self):
-        """187 维 height_scan = clamp(-terrain_z_base - 0.5, -1, 1), 取自 base 系高程网格。"""
+        """Convert /height_map samples to the 187-dim training height_scan convention."""
         with self.height_lock:
             g = self.height_xyz
         if g is None or len(g) == 0:
@@ -465,8 +537,15 @@ class NoisyElevationNode(Node):
 
         tgx = np.clip(np.round((_TX - x0) / res).astype(np.int32), 0, W - 1)
         tgy = np.clip(np.round((_TY - y0) / res).astype(np.int32), 0, H - 1)
-        terrain = Zmap[tgy * W + tgx]                  # 187 terrain_z_base
-        hs = -terrain - HEIGHT_OFFSET                  # = base_z - terrain_z - 0.5
+        terrain = Zmap[tgy * W + tgx]                  # 187 samples in source height-map semantics
+        if self.height_map_mode == 'terrain_z_base':
+            hs = -terrain - HEIGHT_OFFSET              # MuJoCo sim: base_z - terrain_z - 0.5
+        elif self.height_map_mode == 'official_relative':
+            hs = -terrain                              # Official M20 map: no extra 0.5 offset
+        else:
+            terrain_grid = terrain.reshape(H_NY, H_NX)
+            ref = self._official_center_ref(terrain_grid)
+            hs = -(terrain - ref)                      # local support plane -> 0
         hs = np.where(np.isfinite(hs), hs, 0.0)        # 空洞 -> 0 (名义平地)
         return np.clip(hs, -1.0, 1.0).astype(np.float32)
 
