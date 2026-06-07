@@ -589,8 +589,6 @@ if [ "{str(not args.legacy_106_perception).lower()}" = "true" ]; then
     -p terrain_cache_scan:=false \\
     -p fk_height_scan:=false \\
     -p zero_height_scan:=false \\
-    -p scan_cache_ttl_sec:={args.scan_cache_ttl_sec} \\
-    -p scan_cache_min_valid_bins:={args.scan_cache_min_valid_bins} \\
     > "$perception_log" 2>&1 < /dev/null &
   echo "official height-map noisy_elevation log=$perception_log"
   sleep 1
@@ -783,8 +781,6 @@ nohup python3 src/M20_sdk_deploy/scripts/noisy_elevation_node.py \\
   -p zero_height_scan:=false \\
   -p cache_ttl_sec:={args.cache_ttl_sec} \\
   -p cache_radius_m:={args.cache_radius_m} \\
-  -p scan_cache_ttl_sec:={args.scan_cache_ttl_sec} \\
-  -p scan_cache_min_valid_bins:={args.scan_cache_min_valid_bins} \\
   > "$log" 2>&1 < /dev/null &
 echo "noisy_elevation log=$log"
 sleep 1
@@ -1001,8 +997,6 @@ def parse_args():
     parser.add_argument("--joy-rate", type=float, default=200.0)
     parser.add_argument("--cache-ttl-sec", type=float, default=8.0)
     parser.add_argument("--cache-radius-m", type=float, default=3.0)
-    parser.add_argument("--scan-cache-ttl-sec", type=float, default=0.5, help="short per-direction scan cache TTL for one-sided lidar dropouts")
-    parser.add_argument("--scan-cache-min-valid-bins", type=int, default=24, help="minimum visible bins per scan direction before updating the scan cache")
     parser.add_argument("--legacy-106-perception", action="store_true", help="use old 106 noisy_elevation_node path; default uses official /height_map on 103")
     parser.add_argument("--official-height-map-mode", choices=["official_centered", "official_relative", "terrain_z_base"], default="official_centered", help="height_scan conversion for official 103 /height_map")
     parser.add_argument("--height-invalid-mode", choices=["zero", "previous"], default="previous", help="fill invalid height_scan samples with zero or previous valid samples")

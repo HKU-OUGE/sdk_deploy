@@ -98,12 +98,11 @@ def _bin_one_direction(pts, boresight_sign):
     """点云 -> 252 维归一化扫描 (新 multi_pitch_arc 约定)。
 
     boresight_sign = +1 前向(+X); -1 后向(绕 Z 180° 后 boresight=+X)。
-    返回 (长度 252 的归一化深度, 可见 bin 数)。
-    归一化深度已含 d/2.5 + 盲区<0.3->1.0。
+    返回长度 252 的归一化深度 (已含 d/2.5 + 盲区<0.3->1.0)。
     """
     norm = np.ones(NUM_PER_DIR, dtype=np.float32)   # 默认无 hit -> 归一化 1.0
     if pts.size == 0:
-        return norm, 0
+        return norm
 
     rel = pts - (FWD_OFFSET if boresight_sign > 0 else BWD_OFFSET)
     if boresight_sign > 0:
@@ -113,13 +112,13 @@ def _bin_one_direction(pts, boresight_sign):
 
     m = xs > 1e-6                                          # 前半球
     if not np.any(m):
-        return norm, 0
+        return norm
     xs, ys, zs = xs[m], ys[m], zs[m]
 
     r = np.sqrt(xs * xs + ys * ys + zs * zs)
     valid = r > 1e-6
     if not np.any(valid):
-        return norm, 0
+        return norm
     xs, ys, zs, r = xs[valid], ys[valid], zs[valid], r[valid]
 
     pitch_deg = np.degrees(np.arcsin(np.clip(zs / r, -1.0, 1.0)))   # 仰角
@@ -127,7 +126,7 @@ def _bin_one_direction(pts, boresight_sign):
 
     in_fov = (np.abs(pitch_deg) <= PITCH_MAX_DEG + 1e-3) & (np.abs(az_deg) <= AZ_MAX_DEG + 1e-3)
     if not np.any(in_fov):
-        return norm, 0
+        return norm
     pitch_deg, az_deg, r = pitch_deg[in_fov], az_deg[in_fov], r[in_fov]
 
     p_idx = np.clip(np.rint((pitch_deg - PITCH_MIN_DEG) / PITCH_STEP_DEG).astype(np.int32), 0, NUM_PITCH - 1)
@@ -136,11 +135,10 @@ def _bin_one_direction(pts, boresight_sign):
 
     depth = np.full(NUM_PER_DIR, MAX_DIST, dtype=np.float32)
     np.minimum.at(depth, flat, r.astype(np.float32))
-    visible_bins = int(np.count_nonzero((depth >= MIN_DIST) & (depth < MAX_DIST)))
 
     norm = np.clip(depth / MAX_DIST, 0.0, 1.0).astype(np.float32)   # multi_layer_scan 归一化
     norm[depth < MIN_DIST] = 1.0                                    # 盲区 = no-hit
-    return norm, visible_bins
+    return norm
 
 
 def _cloud_to_xyz(msg):
@@ -233,8 +231,6 @@ class NoisyElevationNode(Node):
         self.declare_parameter('cache_ttl_sec', 8.0)
         self.declare_parameter('cache_radius_m', 3.0)
         self.declare_parameter('cache_min_points', 3)
-        self.declare_parameter('scan_cache_ttl_sec', 0.5)
-        self.declare_parameter('scan_cache_min_valid_bins', 24)
         lt = self.get_parameter('lidar_topic').value
         ht = self.get_parameter('height_topic').value
         self.zero_height_scan = bool(self.get_parameter('zero_height_scan').value)
@@ -257,8 +253,6 @@ class NoisyElevationNode(Node):
         self.cache_ttl = float(self.get_parameter('cache_ttl_sec').value)
         self.cache_radius = float(self.get_parameter('cache_radius_m').value)
         self.cache_min_points = int(self.get_parameter('cache_min_points').value)
-        self.scan_cache_ttl = max(0.0, float(self.get_parameter('scan_cache_ttl_sec').value))
-        self.scan_cache_min_bins = min(NUM_PER_DIR, max(1, int(self.get_parameter('scan_cache_min_valid_bins').value)))
 
         self.sub = self.create_subscription(PointCloud2, lt, self.pc_callback, 10)
         self.height_sub = self.create_subscription(PointCloud2, ht, self.height_callback, 10)
@@ -286,13 +280,6 @@ class NoisyElevationNode(Node):
         self.last_height_scan = None
         self.height_invalid_count = 0
         self.height_invalid_total = 0
-        self.last_scan = {
-            +1: {"scan": None, "stamp": 0.0, "valid_bins": 0},
-            -1: {"scan": None, "stamp": 0.0, "valid_bins": 0},
-        }
-        self.scan_cache_used = {+1: 0, -1: 0}
-        self.scan_cache_miss = {+1: 0, -1: 0}
-        self.scan_visible_bins = {+1: 0, -1: 0}
 
         # /LIO_ODOM 仅用于记录/校验 z (height_scan 不依赖绝对 z)
         self.last_odom_z = None
@@ -313,9 +300,7 @@ class NoisyElevationNode(Node):
             f"height({HEIGHT_DIM}) + fwd({NUM_PER_DIR}) + bwd({NUM_PER_DIR}) = {NOISY_ELEV_DIM} | "
             f"zero_height_scan={self.zero_height_scan} fk_height_scan={self.fk_height_scan} "
             f"terrain_cache_scan={self.terrain_cache_scan} height_map_mode={self.height_map_mode} "
-            f"height_invalid_mode={self.height_invalid_mode} "
-            f"scan_cache_ttl={self.scan_cache_ttl:.2f}s "
-            f"scan_cache_min_bins={self.scan_cache_min_bins}")
+            f"height_invalid_mode={self.height_invalid_mode}")
 
     def odom_callback(self, msg):
         z = float(msg.pose.pose.position.z)
@@ -591,24 +576,6 @@ class NoisyElevationNode(Node):
         self.last_height_scan = out
         return out
 
-    def apply_scan_cache(self, scan, visible_bins, boresight_sign, now):
-        """Hold the last good front/back scan through short one-sided cloud dropouts."""
-        self.scan_visible_bins[boresight_sign] = int(visible_bins)
-        state = self.last_scan[boresight_sign]
-        if visible_bins >= self.scan_cache_min_bins:
-            state["scan"] = scan.copy()
-            state["stamp"] = now
-            state["valid_bins"] = int(visible_bins)
-            return scan
-
-        cached = state["scan"]
-        if self.scan_cache_ttl > 0.0 and cached is not None and now - state["stamp"] <= self.scan_cache_ttl:
-            self.scan_cache_used[boresight_sign] += 1
-            return cached.copy()
-
-        self.scan_cache_miss[boresight_sign] += 1
-        return scan
-
     def pc_callback(self, msg):
         self.recv_count += 1
         t0 = time.time()
@@ -625,11 +592,8 @@ class NoisyElevationNode(Node):
             height = self.compute_fk_height_scan()              # 临时真机: FK+IMU 稳定高度
         else:
             height = self.compute_height_scan()                 # 187
-        fwd, fwd_bins = _bin_one_direction(points, +1)          # 252
-        bwd, bwd_bins = _bin_one_direction(points, -1)          # 252
-        now = time.time()
-        fwd = self.apply_scan_cache(fwd, fwd_bins, +1, now)
-        bwd = self.apply_scan_cache(bwd, bwd_bins, -1, now)
+        fwd = _bin_one_direction(points, +1)                    # 252
+        bwd = _bin_one_direction(points, -1)                    # 252
 
         out = Float32MultiArray()
         out.data = height.tolist() + fwd.tolist() + bwd.tolist()
@@ -652,9 +616,6 @@ class NoisyElevationNode(Node):
                 hinfo += (f" cache:{len(self.terrain_cache)} upd:{self.cache_update_cells} "
                           f"hit:{self.cache_hits} miss:{self.cache_misses} "
                           f"base_h:{self.last_base_height if self.last_base_height is not None else float('nan'):.3f}")
-            hinfo += (f" scan_bins:f{self.scan_visible_bins[+1]}/b{self.scan_visible_bins[-1]} "
-                      f"scan_cache:f{self.scan_cache_used[+1]}/{self.scan_cache_miss[+1]} "
-                      f"b{self.scan_cache_used[-1]}/{self.scan_cache_miss[-1]}")
             zinfo = ""
             if self.last_odom_z is not None:
                 zinfo = (f" | LIO_ODOM z last={self.last_odom_z:.4f} "
