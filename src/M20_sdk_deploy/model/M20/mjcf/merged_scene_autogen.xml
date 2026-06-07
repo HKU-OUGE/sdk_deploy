@@ -209,10 +209,10 @@
     <geom type="box" pos="27.000 0.0 0.260" size="1.000 1.500 0.250" material="stone_mat" />
     <geom type="box" pos="28.500 0.0 0.510" size="0.500 1.500 0.500" material="stone_mat" />
     <geom type="box" pos="30.000 0.0 0.260" size="1.000 1.500 0.250" material="stone_mat" />
-    <geom type="box" pos="31.150 0.0 0.005" size="0.150 1.500 0.005" material="stone_mat" />
+    <geom type="box" pos="31.150 0.0 0.155" size="0.150 1.500 0.155" material="stone_mat" />
     <geom type="box" pos="31.800 0.0 0.255" size="0.500 1.500 0.255" material="stone_mat" />
     <geom type="box" pos="33.300 0.0 0.260" size="1.000 1.500 0.250" material="stone_mat" />
-    <geom type="box" pos="34.500 0.0 0.005" size="0.200 1.500 0.005" material="stone_mat" />
+    <geom type="box" pos="34.500 0.0 0.155" size="0.200 1.500 0.155" material="stone_mat" />
     <geom type="box" pos="35.200 0.0 0.255" size="0.500 1.500 0.255" material="stone_mat" />
     <geom type="box" pos="36.700 0.0 0.260" size="1.000 1.500 0.250" material="stone_mat" />
     <geom type="box" pos="37.950 0.0 0.260" size="0.250 1.500 0.250" material="stone_mat" />
