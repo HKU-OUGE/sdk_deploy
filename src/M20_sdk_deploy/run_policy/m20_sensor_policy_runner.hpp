@@ -12,6 +12,7 @@
 #include <fstream>
 #include <iomanip>
 #include <ctime>
+#include <string>
 
 class M20SensorPolicyRunner : public PolicyRunnerBase {
 private:
@@ -39,6 +40,8 @@ private:
     int scan_dim_ = LEGACY_ENV_DIM;                          // = proprio_env_dim_ - proprio_dim_
     int proprio_env_dim_ = proprio_dim_ + LEGACY_ENV_DIM;    // 1049 (legacy 默认)
     bool use_full_perception_ = false;                       // true 当检测到新 691 布局
+    bool use_scan_only_perception_ = false;                  // unified/gap scan-only deployment path
+    std::string perception_topic_ = "/perception/noisy_elevation_array";
     
     const int history_len_ = 15;
     const int estimator_dim_ = 855;    
@@ -104,6 +107,13 @@ private:
     std::string log_file_name_;
     timespec system_time;
 
+    static bool pathEndsWithFilename(const std::string& path, const std::string& filename) {
+        if (path == filename) return true;
+        const std::string suffix = "/" + filename;
+        return path.size() >= suffix.size()
+            && path.compare(path.size() - suffix.size(), std::string::npos, suffix) == 0;
+    }
+
 public:
     M20SensorPolicyRunner(const std::string &policy_name, const std::string &policy_path, bool is_offline_test = false) :
             PolicyRunnerBase(policy_name), env_(ORT_LOGGING_LEVEL_WARNING, "M20SensorPolicyRunner"),
@@ -123,11 +133,19 @@ public:
             proprio_env_dim_ = n;
             scan_dim_ = proprio_env_dim_ - proprio_dim_;
             use_full_perception_ = (scan_dim_ == NOISY_ELEV_DIM || scan_dim_ == GAP_ELEV_DIM);
+            const bool is_scan_only_policy =
+                pathEndsWithFilename(policy_path, "unified_policy.onnx")
+                || pathEndsWithFilename(policy_path, "gap_unified_policy.onnx");
+            use_scan_only_perception_ = use_full_perception_ && is_scan_only_policy;
+            if (use_scan_only_perception_) {
+                perception_topic_ = "/perception/noisy_elevation_scan_only_array";
+            }
             shape_proprio_env_ = {1, proprio_env_dim_};
             std::cout << "[" << policy_name_ << "] ONNX proprio_and_env=" << proprio_env_dim_
                       << " (env=" << scan_dim_ << ", "
                       << (scan_dim_ == NOISY_ELEV_DIM ? "NEW noisy_elevation 691"
                           : (scan_dim_ == GAP_ELEV_DIM ? "gap elevation 439" : "legacy scan 992"))
+                      << ", topic=" << (use_full_perception_ ? perception_topic_ : "/scan/multi_layer_features_array")
                       << ")" << std::endl;
         }
 
@@ -171,15 +189,19 @@ public:
 
             if (use_full_perception_) {
                 // 新模型: 订阅独立感知节点发布的完整、已归一化 691 维 noisy_elevation。
-                // 691 unified: [height187 | fwd252 | bwd252] 原样拷入。
+                // scan-only unified/gap: [height187=0 | fwd252 | bwd252]。
+                // 旧 height-map 691: [height187 | fwd252 | bwd252] 原样拷入。
                 // 439 gap:     [height187 | fwd252] 取前 439 维，避免误走旧 992 scan。
                 perception_sub_ = ros_node_->create_subscription<std_msgs::msg::Float32MultiArray>(
-                    "/perception/noisy_elevation_array", rclcpp::SensorDataQoS(),
+                    perception_topic_, rclcpp::SensorDataQoS(),
                     [this](const std_msgs::msg::Float32MultiArray::SharedPtr msg) {
                         const int msg_dim = static_cast<int>(msg->data.size());
                         if (msg_dim != scan_dim_ && !(scan_dim_ == GAP_ELEV_DIM && msg_dim == NOISY_ELEV_DIM)) return;
                         std::lock_guard<std::mutex> lock(scan_mutex_);
                         std::copy(msg->data.begin(), msg->data.begin() + scan_dim_, perception_full_.begin());
+                        if (use_scan_only_perception_) {
+                            std::fill(perception_full_.begin(), perception_full_.begin() + HEIGHT_DIM, 0.0f);
+                        }
                         scan_received_ = true;
                     });
             } else {

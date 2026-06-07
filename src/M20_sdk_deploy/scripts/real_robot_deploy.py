@@ -185,6 +185,7 @@ test -d {REMOTE_ROOT}
 test -f {REMOTE_ROOT}/install/setup.bash
 test -x {REMOTE_ROOT}/install/m20_sdk_deploy/lib/m20_sdk_deploy/rl_deploy
 test -x {REMOTE_ROOT}/install/m20_sdk_deploy/lib/m20_sdk_deploy/lidar_to_scan_cpp
+test -x {REMOTE_ROOT}/install/m20_sdk_deploy/lib/m20_sdk_deploy/noisy_elevation_scan_only_cpp
 test -f {REMOTE_ROOT}/src/M20_sdk_deploy/scripts/noisy_elevation_node.py
 test -f /opt/ros/foxy/setup.bash
 test -f /opt/robot/scripts/setup_ros2.sh
@@ -239,6 +240,7 @@ def start_local_background(args, name, cmd, log_file, *, env_extra=None):
 
 
 def start_103(args, tag):
+    need_height_map = args.heightmap_perception or args.web_visualizer or args.legacy_106_perception
     script = f"""
 set -e
 run_with_timeout() {{
@@ -510,6 +512,59 @@ PY
   rm -f "$tmp"
   return 1
 }}
+scan_only_frame_available() {{
+  tmp=$(mktemp)
+  set +e
+  run_with_timeout 8.0 python3 - <<'PY' > "$tmp" 2>&1
+import math
+import os
+import time
+
+import rclpy
+from rclpy.node import Node
+from std_msgs.msg import Float32MultiArray
+
+
+class Probe(Node):
+    def __init__(self):
+        super().__init__("scan_only_noisy_elevation_probe")
+        self.frame = None
+        self.create_subscription(Float32MultiArray, "/perception/noisy_elevation_scan_only_array", self.cb, 10)
+
+    def cb(self, msg):
+        data = list(msg.data)
+        if len(data) != 691:
+            return
+        finite = [v for v in data if math.isfinite(v)]
+        if not finite:
+            return
+        h = data[:187]
+        s = data[187:]
+        self.frame = (len(data), min(h), max(h), min(s), max(s))
+
+
+rclpy.init()
+node = Probe()
+deadline = time.time() + 6.0
+while time.time() < deadline and node.frame is None:
+    rclpy.spin_once(node, timeout_sec=0.2)
+if node.frame is None:
+    print("SCAN_ONLY_FRAME missing", flush=True)
+    os._exit(2)
+dim, h_min, h_max, s_min, s_max = node.frame
+print(f"SCAN_ONLY_FRAME ok dim={{dim}} height=[{{h_min:.3f}},{{h_max:.3f}}] scan=[{{s_min:.3f}},{{s_max:.3f}}]", flush=True)
+os._exit(0)
+PY
+  rc=$?
+  set -e
+  cat "$tmp"
+  if grep -q 'SCAN_ONLY_FRAME ok' "$tmp"; then
+    rm -f "$tmp"
+    return 0
+  fi
+  rm -f "$tmp"
+  return 1
+}}
 start_lio_with_retries() {{
   attempt=1
   ok=1
@@ -544,17 +599,31 @@ start_lio_with_retries() {{
 source /opt/ros/foxy/setup.bash
 source /opt/robot/scripts/setup_ros2.sh
 mkdir -p {REMOTE_LOG_DIR}/{tag}
-if systemctl is-active --quiet lio_perception.service && systemctl is-active --quiet height_map_nav.service && cloud_frame_available && height_map_frame_available; then
-  echo "[103] LIO and official /height_map already have frames; skip service restart"
+if [ "{str(need_height_map).lower()}" = "true" ]; then
+  if systemctl is-active --quiet lio_perception.service && systemctl is-active --quiet height_map_nav.service && cloud_frame_available && height_map_frame_available; then
+    echo "[103] LIO and official /height_map already have frames; skip service restart"
+  else
+    systemctl restart lio_perception.service height_map_nav.service || true
+    start_lio_with_retries || true
+  fi
+  if height_map_frame_available; then
+    echo "[103] /height_map already has frames; skip HEIGHT_MAP_ENABLE"
+  else
+    height_map_enable_call || echo "[warn] HEIGHT_MAP_ENABLE timed out or failed; continuing"
+    height_map_frame_available || echo "[warn] /height_map still has no frame after HEIGHT_MAP_ENABLE"
+  fi
 else
-  systemctl restart lio_perception.service height_map_nav.service || true
-  start_lio_with_retries || true
+  if systemctl is-active --quiet lio_perception.service && cloud_frame_available; then
+    echo "[103] LIO /CLOUD_REGISTERED_BODY already has frames; skip service restart"
+  else
+    systemctl restart lio_perception.service || true
+    start_lio_with_retries || true
+  fi
+  echo "[103] scan-only deployment: skip height_map_nav and HEIGHT_MAP_ENABLE"
 fi
-if height_map_frame_available; then
-  echo "[103] /height_map already has frames; skip HEIGHT_MAP_ENABLE"
-else
-  height_map_enable_call || echo "[warn] HEIGHT_MAP_ENABLE timed out or failed; continuing"
-  height_map_frame_available || echo "[warn] /height_map still has no frame after HEIGHT_MAP_ENABLE"
+if ! cloud_frame_available; then
+  echo "[warn] /CLOUD_REGISTERED_BODY is missing; scan-only policies may see all no-hit scan values"
+  start_lio_with_retries || true
 fi
 if ! sdk_mode_call; then
   echo "[error] SDK_MODE command failed or timed out"
@@ -576,7 +645,25 @@ if [ "{str(args.legacy_scan).lower()}" = "true" ]; then
     echo "[warn] /scan/multi_layer_features_array is missing; platform/crawl policies will see no-hit scan values"
   fi
 fi
-if [ "{str(not args.legacy_106_perception).lower()}" = "true" ]; then
+if [ "{str(args.scan_only_perception).lower()}" = "true" ]; then
+  scan_only_log={REMOTE_LOG_DIR}/{tag}/noisy_elevation_scan_only_103.log
+  pkill -TERM -f {REMOTE_ROOT}/install/m20_sdk_deploy/lib/m20_sdk_deploy/noisy_elevation_scan_only_cpp || true
+  pkill -TERM -f 'ros2 run m20_sdk_deploy noisy_elevation_scan_only_cpp' || true
+  nohup ros2 run m20_sdk_deploy noisy_elevation_scan_only_cpp \\
+    --ros-args \\
+    -p lidar_topic:={args.scan_lidar_topic} \\
+    -p output_topic:=/perception/noisy_elevation_scan_only_array \\
+    -p pitch_min_deg:={args.scan_only_pitch_min_deg} \\
+    -p pitch_max_deg:={args.scan_only_pitch_max_deg} \\
+    > "$scan_only_log" 2>&1 < /dev/null &
+  echo "scan-only noisy_elevation log=$scan_only_log"
+  sleep 1
+  pgrep -af "{REMOTE_ROOT}/install/m20_sdk_deploy/lib/m20_sdk_deploy/noisy_elevation_scan_only_cpp|ros2 run m20_sdk_deploy noisy_elevation_scan_only_cpp" || true
+  if ! scan_only_frame_available; then
+    echo "[warn] /perception/noisy_elevation_scan_only_array is missing; unified/gap scan-only policies will see default scan values"
+  fi
+fi
+if [ "{str(args.heightmap_perception and not args.legacy_106_perception).lower()}" = "true" ]; then
   perception_log={REMOTE_LOG_DIR}/{tag}/noisy_elevation_103_official_heightmap.log
   pkill -TERM -f {REMOTE_ROOT}/src/M20_sdk_deploy/scripts/noisy_elevation_node.py || true
   pkill -TERM -f 'src/M20_sdk_deploy/scripts/noisy_elevation_node.py' || true
@@ -661,6 +748,62 @@ PY
     out = sudo_script(args.host103, check_script, timeout=20, check=False)
     if out.returncode != 0:
         raise RuntimeError("103 /perception/noisy_elevation_array did not produce a valid 691-dim frame")
+
+
+def wait_for_103_scan_only_frame(args):
+    if args.dry_run:
+        print("[dry-run] skip waiting for 103 scan-only noisy_elevation frame")
+        return
+    check_script = r"""
+set -e
+source /opt/ros/foxy/setup.bash
+source /opt/robot/scripts/setup_ros2.sh
+python3 - <<'PY'
+import math
+import os
+import time
+
+import rclpy
+from rclpy.node import Node
+from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
+from std_msgs.msg import Float32MultiArray
+
+
+class Probe(Node):
+    def __init__(self):
+        super().__init__("scan_only_noisy_elevation_probe")
+        self.frame = None
+        qos = QoSProfile(depth=10)
+        qos.history = HistoryPolicy.KEEP_LAST
+        qos.reliability = ReliabilityPolicy.RELIABLE
+        qos.durability = DurabilityPolicy.VOLATILE
+        self.create_subscription(Float32MultiArray, "/perception/noisy_elevation_scan_only_array", self.cb, qos)
+
+    def cb(self, msg):
+        data = list(msg.data)
+        if len(data) != 691 or not all(math.isfinite(v) for v in data):
+            return
+        h = data[:187]
+        s = data[187:]
+        self.frame = (len(data), min(h), max(h), min(s), max(s))
+
+
+rclpy.init()
+node = Probe()
+deadline = time.time() + 8.0
+while time.time() < deadline and node.frame is None:
+    rclpy.spin_once(node, timeout_sec=0.2)
+if node.frame is None:
+    print("SCAN_ONLY_FRAME missing", flush=True)
+    os._exit(2)
+dim, h_min, h_max, s_min, s_max = node.frame
+print(f"SCAN_ONLY_FRAME ok dim={dim} height=[{h_min:.3f},{h_max:.3f}] scan=[{s_min:.3f},{s_max:.3f}]", flush=True)
+os._exit(0)
+PY
+"""
+    out = sudo_script(args.host103, check_script, timeout=20, check=False)
+    if out.returncode != 0:
+        raise RuntimeError("103 /perception/noisy_elevation_scan_only_array did not produce a valid 691-dim frame")
 
 
 def ensure_103_lio_data(args):
@@ -848,7 +991,7 @@ def status(args):
     print("== 103 ==")
     out103 = ssh_capture(
         args.host103,
-        "pgrep -af '[s]dk_deploy_tty|[m]20_sdk_deploy|[r]l_deploy|[l]idar_to_scan|[n]oisy_elevation_node|[h]eight_map_nav|[l]io_ddsnode|[r]slidar' || true; "
+        "pgrep -af '[s]dk_deploy_tty|[m]20_sdk_deploy|[r]l_deploy|[l]idar_to_scan|[n]oisy_elevation|[h]eight_map_nav|[l]io_ddsnode|[r]slidar' || true; "
         "ss -ltnp 2>/dev/null | grep ':9999' || true",
         timeout=10,
     )
@@ -904,6 +1047,8 @@ pkill -TERM -f {REMOTE_ROOT}/install/m20_sdk_deploy/lib/m20_sdk_deploy/rl_deploy
 pkill -TERM -f 'ros2 run m20_sdk_deploy rl_deploy'
 pkill -TERM -f {REMOTE_ROOT}/install/m20_sdk_deploy/lib/m20_sdk_deploy/lidar_to_scan_cpp
 pkill -TERM -f 'ros2 run m20_sdk_deploy lidar_to_scan_cpp'
+pkill -TERM -f {REMOTE_ROOT}/install/m20_sdk_deploy/lib/m20_sdk_deploy/noisy_elevation_scan_only_cpp
+pkill -TERM -f 'ros2 run m20_sdk_deploy noisy_elevation_scan_only_cpp'
 sleep 1
 source /opt/ros/foxy/setup.bash
 source /opt/robot/scripts/setup_ros2.sh 2>/dev/null || true
@@ -951,10 +1096,18 @@ def start(args):
     cleanup_local_deploy_processes(args)
     if not args.skip_preflight:
         preflight(args)
-    total_steps = 5 if args.web_visualizer else 4
+    total_steps = 3  # 103 start, control-port wait, local joystick.
     if args.legacy_106_perception:
         total_steps += 1
-    print(f"[1/{total_steps}] 103: LIO/official height map, SDK mode, rl_deploy")
+        if args.web_visualizer:
+            total_steps += 1
+    else:
+        total_steps += 1
+    if args.web_visualizer:
+        total_steps += 1
+    need_height_map = args.heightmap_perception or args.web_visualizer or args.legacy_106_perception
+    perception_boot = "LIO/official height map" if need_height_map else "LIO cloud only"
+    print(f"[1/{total_steps}] 103: {perception_boot}, SDK mode, rl_deploy")
     start_103(args, tag)
     next_step = 2
     if args.legacy_106_perception:
@@ -966,14 +1119,23 @@ def start(args):
             wait_for_106_height_map_frame(args)
             next_step += 1
     else:
-        print(f"[{next_step}/{total_steps}] wait for 103 official noisy_elevation frame")
-        wait_for_103_perception_frame(args)
+        if args.heightmap_perception:
+            print(f"[{next_step}/{total_steps}] wait for 103 official noisy_elevation frame")
+            wait_for_103_perception_frame(args)
+        elif args.scan_only_perception:
+            print(f"[{next_step}/{total_steps}] wait for 103 scan-only noisy_elevation frame")
+            wait_for_103_scan_only_frame(args)
+        else:
+            print(f"[{next_step}/{total_steps}] perception frame wait disabled")
         next_step += 1
     control_step = next_step
     print(f"[{control_step}/{total_steps}] wait for 103 TCP control port")
     wait_for_103_control_port(args)
     print(f"[{control_step + 1}/{total_steps}] local: joystick sender")
-    print(f"[{control_step + 2}/{total_steps}] local: web height-map visualizer" if args.web_visualizer else f"[{control_step + 2}/{total_steps}] local: web visualizer disabled")
+    if args.web_visualizer:
+        print(f"[{control_step + 2}/{total_steps}] local: web height-map visualizer")
+    else:
+        print("[local] web visualizer disabled")
     start_local(args, tag)
     print("[deploy] startup commands completed")
     if args.dry_run:
@@ -1002,6 +1164,10 @@ def parse_args():
     parser.add_argument("--height-invalid-mode", choices=["zero", "previous"], default="previous", help="fill invalid height_scan samples with zero or previous valid samples")
     parser.add_argument("--legacy-scan", action=argparse.BooleanOptionalAction, default=True, help="start 103 lidar_to_scan_cpp for legacy 992-dim platform/crawl policies")
     parser.add_argument("--scan-lidar-topic", default="/CLOUD_REGISTERED_BODY")
+    parser.add_argument("--scan-only-perception", action=argparse.BooleanOptionalAction, default=True, help="start C++ 691-dim [zero height | SCAN] perception for unified/gap policies")
+    parser.add_argument("--scan-only-pitch-min-deg", type=float, default=-60.0)
+    parser.add_argument("--scan-only-pitch-max-deg", type=float, default=10.0)
+    parser.add_argument("--heightmap-perception", action=argparse.BooleanOptionalAction, default=False, help="also start Python official-height-map noisy_elevation node")
     parser.add_argument("--web-visualizer", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--visual-remote", default="", help="remote host for web visualizer; default host103")
     parser.add_argument("--visual-jump", default="", help="jump host for web visualizer; default none because official /height_map is on 103")

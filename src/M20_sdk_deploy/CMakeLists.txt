@@ -27,6 +27,7 @@ find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(drdds REQUIRED)
 find_package(sensor_msgs REQUIRED)
+find_package(std_msgs REQUIRED)
 # ================= 新增：高程图(感知)相关依赖 =================
 find_package(grid_map_msgs REQUIRED)
 find_package(tf2_ros REQUIRED)
@@ -95,8 +96,16 @@ ament_target_dependencies(lidar_to_scan_cpp
     std_msgs
 )
 
+add_executable(noisy_elevation_scan_only_cpp src/noisy_elevation_scan_only.cpp)
+ament_target_dependencies(noisy_elevation_scan_only_cpp
+    rclcpp
+    sensor_msgs
+    std_msgs
+)
+
 install(TARGETS
     lidar_to_scan_cpp
+    noisy_elevation_scan_only_cpp
     DESTINATION lib/${PROJECT_NAME}
 )
 
