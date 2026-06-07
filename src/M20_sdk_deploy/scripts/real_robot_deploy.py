@@ -655,6 +655,8 @@ if [ "{str(args.scan_only_perception).lower()}" = "true" ]; then
     -p output_topic:=/perception/noisy_elevation_scan_only_array \\
     -p pitch_min_deg:={args.scan_only_pitch_min_deg} \\
     -p pitch_max_deg:={args.scan_only_pitch_max_deg} \\
+    -p scan_cache_ttl_sec:={args.scan_cache_ttl_sec} \\
+    -p scan_cache_min_valid_bins:={args.scan_cache_min_valid_bins} \\
     > "$scan_only_log" 2>&1 < /dev/null &
   echo "scan-only noisy_elevation log=$scan_only_log"
   sleep 1
@@ -1167,6 +1169,8 @@ def parse_args():
     parser.add_argument("--scan-only-perception", action=argparse.BooleanOptionalAction, default=True, help="start C++ 691-dim [zero height | SCAN] perception for unified/gap policies")
     parser.add_argument("--scan-only-pitch-min-deg", type=float, default=-60.0)
     parser.add_argument("--scan-only-pitch-max-deg", type=float, default=10.0)
+    parser.add_argument("--scan-cache-ttl-sec", type=float, default=0.5, help="short per-direction scan cache TTL for one-sided lidar dropouts; set 0 to disable")
+    parser.add_argument("--scan-cache-min-valid-bins", type=int, default=24, help="minimum visible bins per scan direction before updating the scan cache")
     parser.add_argument("--heightmap-perception", action=argparse.BooleanOptionalAction, default=False, help="also start Python official-height-map noisy_elevation node")
     parser.add_argument("--web-visualizer", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--visual-remote", default="", help="remote host for web visualizer; default host103")

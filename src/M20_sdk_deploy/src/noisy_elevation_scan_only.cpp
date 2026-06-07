@@ -20,6 +20,8 @@ public:
         declare_parameter<double>("pitch_max_deg", 10.0);
         declare_parameter<double>("az_min_deg", -45.0);
         declare_parameter<double>("az_max_deg", 45.0);
+        declare_parameter<double>("scan_cache_ttl_sec", 0.5);
+        declare_parameter<int>("scan_cache_min_valid_bins", 24);
 
         lidar_topic_ = get_parameter("lidar_topic").as_string();
         output_topic_ = get_parameter("output_topic").as_string();
@@ -27,6 +29,8 @@ public:
         pitch_max_deg_ = static_cast<float>(get_parameter("pitch_max_deg").as_double());
         az_min_deg_ = static_cast<float>(get_parameter("az_min_deg").as_double());
         az_max_deg_ = static_cast<float>(get_parameter("az_max_deg").as_double());
+        scan_cache_ttl_sec_ = std::max(0.0, get_parameter("scan_cache_ttl_sec").as_double());
+        scan_cache_min_valid_bins_ = clampi(get_parameter("scan_cache_min_valid_bins").as_int(), 1, NUM_PER_DIR);
         if (pitch_max_deg_ <= pitch_min_deg_) {
             throw std::runtime_error("pitch_max_deg must be greater than pitch_min_deg");
         }
@@ -46,9 +50,10 @@ public:
 
         RCLCPP_INFO(
             get_logger(),
-            "scan-only noisy_elevation: lidar=%s output=%s dim=%d pitch=[%.1f, %.1f] az=[%.1f, %.1f]",
+            "scan-only noisy_elevation: lidar=%s output=%s dim=%d pitch=[%.1f, %.1f] az=[%.1f, %.1f] scan_cache=%.2fs/%d",
             lidar_topic_.c_str(), output_topic_.c_str(), NOISY_ELEV_DIM,
-            pitch_min_deg_, pitch_max_deg_, az_min_deg_, az_max_deg_);
+            pitch_min_deg_, pitch_max_deg_, az_min_deg_, az_max_deg_,
+            scan_cache_ttl_sec_, scan_cache_min_valid_bins_);
     }
 
 private:
@@ -82,6 +87,12 @@ private:
             binPoint(px - BWD_OFFSET_X, py, pz - OFFSET_Z, -1, bwd);
         }
 
+        const auto now = std::chrono::steady_clock::now();
+        const int raw_fwd_hits = countVisibleBins(fwd);
+        const int raw_bwd_hits = countVisibleBins(bwd);
+        applyScanCache(fwd, fwd_cache_, raw_fwd_hits, now);
+        applyScanCache(bwd, bwd_cache_, raw_bwd_hits, now);
+
         std_msgs::msg::Float32MultiArray out;
         out.data.reserve(NOISY_ELEV_DIM);
         out.data.insert(out.data.end(), HEIGHT_DIM, 0.0f);
@@ -91,8 +102,10 @@ private:
 
         last_fwd_min_ = minDepth(fwd);
         last_bwd_min_ = minDepth(bwd);
-        last_fwd_hits_ = countHits(fwd);
-        last_bwd_hits_ = countHits(bwd);
+        last_fwd_hits_ = countVisibleBins(fwd);
+        last_bwd_hits_ = countVisibleBins(bwd);
+        last_raw_fwd_hits_ = raw_fwd_hits;
+        last_raw_bwd_hits_ = raw_bwd_hits;
 
         pub_count_++;
         const auto end = std::chrono::high_resolution_clock::now();
@@ -140,13 +153,50 @@ private:
         return v < lo ? lo : (v > hi ? hi : v);
     }
 
+    struct ScanCache {
+        std::vector<float> depth;
+        std::chrono::steady_clock::time_point stamp;
+        bool valid = false;
+        int used = 0;
+        int miss = 0;
+        int visible_bins = 0;
+    };
+
+    void applyScanCache(
+        std::vector<float>& depth,
+        ScanCache& cache,
+        int visible_bins,
+        const std::chrono::steady_clock::time_point& now) {
+        cache.visible_bins = visible_bins;
+        if (scan_cache_ttl_sec_ <= 0.0) return;
+
+        if (visible_bins >= scan_cache_min_valid_bins_) {
+            cache.depth = depth;
+            cache.stamp = now;
+            cache.valid = true;
+            return;
+        }
+
+        if (cache.valid) {
+            const double age_sec = std::chrono::duration<double>(now - cache.stamp).count();
+            if (age_sec <= scan_cache_ttl_sec_) {
+                depth = cache.depth;
+                cache.used++;
+                return;
+            }
+        }
+        cache.miss++;
+    }
+
     void logDiagnostics() {
         if (recv_count_ > 0) {
             const double avg = total_time_ms_ / recv_count_;
             RCLCPP_INFO(
                 get_logger(),
-                "[scan-only noisy_elev] recv=%dHz pub=%dHz avg=%.3fms fwd_min=%.2fm bwd_min=%.2fm hits=%d/%d topic=%s",
+                "[scan-only noisy_elev] recv=%dHz pub=%dHz avg=%.3fms fwd_min=%.2fm bwd_min=%.2fm hits=%d/%d raw=%d/%d cache=f%d/%d b%d/%d topic=%s",
                 recv_count_, pub_count_, avg, last_fwd_min_, last_bwd_min_, last_fwd_hits_, last_bwd_hits_,
+                last_raw_fwd_hits_, last_raw_bwd_hits_,
+                fwd_cache_.used, fwd_cache_.miss, bwd_cache_.used, bwd_cache_.miss,
                 output_topic_.c_str());
         } else {
             RCLCPP_WARN(get_logger(), "[scan-only noisy_elev] waiting for %s", lidar_topic_.c_str());
@@ -154,6 +204,10 @@ private:
         recv_count_ = 0;
         pub_count_ = 0;
         total_time_ms_ = 0.0;
+        fwd_cache_.used = 0;
+        fwd_cache_.miss = 0;
+        bwd_cache_.used = 0;
+        bwd_cache_.miss = 0;
     }
 
     static constexpr float FWD_OFFSET_X = 0.32028f;
@@ -166,10 +220,10 @@ private:
         return v;
     }
 
-    static int countHits(const std::vector<float>& depth) {
+    static int countVisibleBins(const std::vector<float>& depth) {
         int n = 0;
         for (float d : depth) {
-            if (d < MAX_DIST) ++n;
+            if (d >= MIN_DIST && d < MAX_DIST) ++n;
         }
         return n;
     }
@@ -182,6 +236,8 @@ private:
     float az_max_deg_ = 45.0f;
     float pitch_step_deg_ = 1.0f;
     float az_step_deg_ = 1.0f;
+    double scan_cache_ttl_sec_ = 0.5;
+    int scan_cache_min_valid_bins_ = 24;
 
     rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr sub_;
     rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr pub_;
@@ -193,6 +249,10 @@ private:
     float last_bwd_min_ = MAX_DIST;
     int last_fwd_hits_ = 0;
     int last_bwd_hits_ = 0;
+    int last_raw_fwd_hits_ = 0;
+    int last_raw_bwd_hits_ = 0;
+    ScanCache fwd_cache_;
+    ScanCache bwd_cache_;
 };
 
 int main(int argc, char* argv[]) {
