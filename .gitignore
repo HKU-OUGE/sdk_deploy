@@ -2,3 +2,24 @@ build/
 install/
 log/
 .vscode/
+
+# Python/runtime byproducts
+__pycache__/
+*.py[cod]
+
+# Local robot/simulation logs
+runtime_logs/
+rl_*_control_log_*.csv
+
+# Local policy/terrain backups
+*.bak_*
+*.bak_prepit
+
+# Abandoned local POC workspaces and planning notes
+vendor/elevation_mapping_cpu/
+docs/superpowers/
+src/M20_sdk_deploy/scripts/diagnose_elevation_mapping.py
+src/M20_sdk_deploy/scripts/gridmap_noisy_elevation_node.py
+src/M20_sdk_deploy/scripts/odom_to_tf_node.py
+src/M20_sdk_deploy/scripts/serve_gridmap_bmp.py
+src/M20_sdk_deploy/scripts/visualize_height_map_ssh.py
