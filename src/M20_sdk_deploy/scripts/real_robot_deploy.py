@@ -585,6 +585,7 @@ if [ "{str(not args.legacy_106_perception).lower()}" = "true" ]; then
     -p lidar_topic:=/CLOUD_REGISTERED_BODY \\
     -p height_topic:=/height_map \\
     -p height_map_mode:={args.official_height_map_mode} \\
+    -p height_invalid_mode:={args.height_invalid_mode} \\
     -p terrain_cache_scan:=false \\
     -p fk_height_scan:=false \\
     -p zero_height_scan:=false \\
@@ -774,6 +775,7 @@ nohup python3 src/M20_sdk_deploy/scripts/noisy_elevation_node.py \\
   --ros-args \\
   -p lidar_topic:=/CLOUD_REGISTERED_BODY \\
   -p height_topic:=/height_map \\
+  -p height_invalid_mode:={args.height_invalid_mode} \\
   -p terrain_cache_scan:=true \\
   -p fk_height_scan:=false \\
   -p zero_height_scan:=false \\
@@ -997,6 +999,7 @@ def parse_args():
     parser.add_argument("--cache-radius-m", type=float, default=3.0)
     parser.add_argument("--legacy-106-perception", action="store_true", help="use old 106 noisy_elevation_node path; default uses official /height_map on 103")
     parser.add_argument("--official-height-map-mode", choices=["official_centered", "official_relative", "terrain_z_base"], default="official_centered", help="height_scan conversion for official 103 /height_map")
+    parser.add_argument("--height-invalid-mode", choices=["zero", "previous"], default="previous", help="fill invalid height_scan samples with zero or previous valid samples")
     parser.add_argument("--legacy-scan", action=argparse.BooleanOptionalAction, default=True, help="start 103 lidar_to_scan_cpp for legacy 992-dim platform/crawl policies")
     parser.add_argument("--scan-lidar-topic", default="/CLOUD_REGISTERED_BODY")
     parser.add_argument("--web-visualizer", action=argparse.BooleanOptionalAction, default=True)

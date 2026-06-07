@@ -225,6 +225,7 @@ class NoisyElevationNode(Node):
         self.declare_parameter('fk_height_scan', False)
         self.declare_parameter('terrain_cache_scan', False)
         self.declare_parameter('height_map_mode', 'terrain_z_base')
+        self.declare_parameter('height_invalid_mode', 'zero')
         self.declare_parameter('height_center_kernel', 5)
         self.declare_parameter('cache_resolution', 0.1)
         self.declare_parameter('cache_ttl_sec', 8.0)
@@ -236,10 +237,14 @@ class NoisyElevationNode(Node):
         self.fk_height_scan = bool(self.get_parameter('fk_height_scan').value)
         self.terrain_cache_scan = bool(self.get_parameter('terrain_cache_scan').value)
         self.height_map_mode = str(self.get_parameter('height_map_mode').value).strip().lower()
+        self.height_invalid_mode = str(self.get_parameter('height_invalid_mode').value).strip().lower()
         self.height_center_kernel = int(self.get_parameter('height_center_kernel').value)
         if self.height_map_mode not in ('terrain_z_base', 'official_relative', 'official_centered'):
             self.get_logger().warn(f"unknown height_map_mode={self.height_map_mode}, using terrain_z_base")
             self.height_map_mode = 'terrain_z_base'
+        if self.height_invalid_mode not in ('zero', 'previous'):
+            self.get_logger().warn(f"unknown height_invalid_mode={self.height_invalid_mode}, using zero")
+            self.height_invalid_mode = 'zero'
         if self.height_center_kernel < 1:
             self.height_center_kernel = 1
         if self.height_center_kernel % 2 == 0:
@@ -272,6 +277,9 @@ class NoisyElevationNode(Node):
         self.cache_hits = 0
         self.cache_misses = 0
         self.last_base_height = None
+        self.last_height_scan = None
+        self.height_invalid_count = 0
+        self.height_invalid_total = 0
 
         # /LIO_ODOM 仅用于记录/校验 z (height_scan 不依赖绝对 z)
         self.last_odom_z = None
@@ -291,7 +299,8 @@ class NoisyElevationNode(Node):
             f"✅ noisy_elevation: lidar={lt} height={ht} | "
             f"height({HEIGHT_DIM}) + fwd({NUM_PER_DIR}) + bwd({NUM_PER_DIR}) = {NOISY_ELEV_DIM} | "
             f"zero_height_scan={self.zero_height_scan} fk_height_scan={self.fk_height_scan} "
-            f"terrain_cache_scan={self.terrain_cache_scan} height_map_mode={self.height_map_mode}")
+            f"terrain_cache_scan={self.terrain_cache_scan} height_map_mode={self.height_map_mode} "
+            f"height_invalid_mode={self.height_invalid_mode}")
 
     def odom_callback(self, msg):
         z = float(msg.pose.pose.position.z)
@@ -515,10 +524,18 @@ class NoisyElevationNode(Node):
         with self.height_lock:
             g = self.height_xyz
         if g is None or len(g) == 0:
+            self.height_invalid_count = HEIGHT_DIM
+            self.height_invalid_total = HEIGHT_DIM
+            if self.height_invalid_mode == 'previous' and self.last_height_scan is not None:
+                return self.last_height_scan.copy()
             return np.zeros(HEIGHT_DIM, dtype=np.float32)        # 网格未到: 安全默认(平地名义)
         xs, ys, zs = g[:, 0], g[:, 1], g[:, 2]
         finite = np.isfinite(xs) & np.isfinite(ys) & np.isfinite(zs)
         if not np.any(finite):
+            self.height_invalid_count = HEIGHT_DIM
+            self.height_invalid_total = HEIGHT_DIM
+            if self.height_invalid_mode == 'previous' and self.last_height_scan is not None:
+                return self.last_height_scan.copy()
             return np.zeros(HEIGHT_DIM, dtype=np.float32)
         xs, ys, zs = xs[finite], ys[finite], zs[finite]
 
@@ -546,8 +563,18 @@ class NoisyElevationNode(Node):
             terrain_grid = terrain.reshape(H_NY, H_NX)
             ref = self._official_center_ref(terrain_grid)
             hs = -(terrain - ref)                      # local support plane -> 0
-        hs = np.where(np.isfinite(hs), hs, 0.0)        # 空洞 -> 0 (名义平地)
-        return np.clip(hs, -1.0, 1.0).astype(np.float32)
+        invalid = ~np.isfinite(hs)
+        self.height_invalid_count = int(np.count_nonzero(invalid))
+        self.height_invalid_total = int(hs.size)
+        if np.any(invalid):
+            if self.height_invalid_mode == 'previous' and self.last_height_scan is not None:
+                hs = hs.copy()
+                hs[invalid] = self.last_height_scan[invalid]
+            else:
+                hs = np.where(np.isfinite(hs), hs, 0.0)  # initial/no-cache fallback: nominal flat
+        out = np.clip(hs, -1.0, 1.0).astype(np.float32)
+        self.last_height_scan = out
+        return out
 
     def pc_callback(self, msg):
         self.recv_count += 1
@@ -582,6 +609,7 @@ class NoisyElevationNode(Node):
         if self.recv_count > 0:
             avg = sum(self.process_times) / len(self.process_times) if self.process_times else 0.0
             hinfo = "height:无网格" if self.height_xyz is None else f"height:{self.height_recv}帧"
+            hinfo += f" invalid:{self.height_invalid_count}/{self.height_invalid_total}"
             if self.fk_height_scan or self.terrain_cache_scan:
                 hinfo += f" fk_joint:{self.joint_recv} imu:{self.imu_recv}"
             if self.terrain_cache_scan:

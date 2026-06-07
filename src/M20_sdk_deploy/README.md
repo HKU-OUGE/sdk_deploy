@@ -292,7 +292,7 @@ ros2 service call /SDK_MODE drdds/srv/StdSrvInt32 "{command: 0}"
 - **forward/backward_scan (252 each)**：点云按 `multi_pitch_arc` 几何分格（pitch 12 档 ∈[-25,25]°，azimuth 21 档 ∈[-45,45]°，boresight ±X，flatten `k=pitch*21+az`），归一化 `clip(d/2.5,0,1)`、`<0.3m→1.0`。
 - **height_scan (187)**：17×11 @0.1m yaw 网格。MuJoCo 使用 `height_map_mode:=terrain_z_base`；真机官方 `/height_map` 使用 `height_map_mode:=official_centered`，以机器人中心附近地面为 0，高台/墙为负、坑/下台阶为正。
 
-参数：`lidar_topic`（默认 `/LIDAR_SIM_RAW`；真机 `/CLOUD_REGISTERED_BODY`）、`height_topic`（默认 `/height_map`）、`height_map_mode`。
+参数：`lidar_topic`（默认 `/LIDAR_SIM_RAW`；真机 `/CLOUD_REGISTERED_BODY`）、`height_topic`（默认 `/height_map`）、`height_map_mode`、`height_invalid_mode`。真机一键脚本默认 `height_invalid_mode:=previous`，无效 height 格会沿用上一帧同一格，不再直接填 0；日志会打印 `invalid:x/187`。
 
 ```bash
 # Sim
@@ -303,7 +303,8 @@ python3 src/M20_sdk_deploy/scripts/noisy_elevation_node.py \
   --ros-args \
   -p lidar_topic:=/CLOUD_REGISTERED_BODY \
   -p height_topic:=/height_map \
-  -p height_map_mode:=official_centered
+  -p height_map_mode:=official_centered \
+  -p height_invalid_mode:=previous
 ```
 
 ## 真机注意事项（重要）
